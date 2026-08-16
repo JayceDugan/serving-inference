@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="520" viewBox="0 0 960 520" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<rect width="960" height="520" fill="#ffffff"/>
+<text x="480" y="30" text-anchor="middle" font-size="20" font-weight="600" fill="#222222">Time to First Token (TTFT) — mean / median / P90 / P95 / P99</text>
+<rect x="290" y="41" width="13" height="13" rx="2" fill="#4e79a7"/>
+<text x="309" y="53" font-size="13" fill="#222222">NVFP4 (standard)</text>
+<rect x="520" y="41" width="13" height="13" rx="2" fill="#f28e2b"/>
+<text x="539" y="53" font-size="13" fill="#222222">DSpark (speculative)</text>
+<line x1="80" y1="460" x2="930" y2="460" stroke="#555555"/>
+<text x="72" y="464" text-anchor="end" font-size="12" fill="#777777">0</text>
+<line x1="80" y1="384" x2="930" y2="384" stroke="#e0e0e0"/>
+<text x="72" y="388" text-anchor="end" font-size="12" fill="#777777">2,000</text>
+<line x1="80" y1="308" x2="930" y2="308" stroke="#e0e0e0"/>
+<text x="72" y="312" text-anchor="end" font-size="12" fill="#777777">4,000</text>
+<line x1="80" y1="232" x2="930" y2="232" stroke="#e0e0e0"/>
+<text x="72" y="236" text-anchor="end" font-size="12" fill="#777777">6,000</text>
+<line x1="80" y1="156" x2="930" y2="156" stroke="#e0e0e0"/>
+<text x="72" y="160" text-anchor="end" font-size="12" fill="#777777">8,000</text>
+<line x1="80" y1="80" x2="930" y2="80" stroke="#e0e0e0"/>
+<text x="72" y="84" text-anchor="end" font-size="12" fill="#777777">10,000</text>
+<text x="18" y="270" text-anchor="middle" font-size="12" fill="#777777" transform="rotate(-90 18 270)">ms</text>
+<rect x="114" y="435.56866" width="48" height="24.431339999999977" fill="#4e79a7" rx="2"><title>Mean: 642.93 ms</title></rect>
+<text x="138" y="429.56866" text-anchor="middle" font-size="11.5" fill="#222222">642.93</text>
+<rect x="168" y="253.34802" width="48" height="206.65198" fill="#f28e2b" rx="2"><title>Mean: 5438.21 ms</title></rect>
+<text x="192" y="247.34802" text-anchor="middle" font-size="11.5" fill="#222222">5,438.21</text>
+<text x="165" y="482" text-anchor="middle" font-size="13" fill="#222222">Mean</text>
+<rect x="284" y="437.64232" width="48" height="22.357680000000016" fill="#4e79a7" rx="2"><title>Median: 588.36 ms</title></rect>
+<text x="308" y="431.64232" text-anchor="middle" font-size="11.5" fill="#222222">588.36</text>
+<rect x="338" y="239.53046" width="48" height="220.46954" fill="#f28e2b" rx="2"><title>Median: 5801.83 ms</title></rect>
+<text x="362" y="233.53046" text-anchor="middle" font-size="11.5" fill="#222222">5,801.83</text>
+<text x="335" y="482" text-anchor="middle" font-size="13" fill="#222222">Median</text>
+<rect x="454" y="434.89302" width="48" height="25.10698000000002" fill="#4e79a7" rx="2"><title>P90: 660.71 ms</title></rect>
+<text x="478" y="428.89302" text-anchor="middle" font-size="11.5" fill="#222222">660.71</text>
+<rect x="508" y="170.91956" width="48" height="289.08044" fill="#f28e2b" rx="2"><title>P90: 7607.38 ms</title></rect>
+<text x="532" y="164.91956" text-anchor="middle" font-size="11.5" fill="#222222">7,607.38</text>
+<text x="505" y="482" text-anchor="middle" font-size="13" fill="#222222">P90</text>
+<rect x="624" y="409.81796" width="48" height="50.18203999999997" fill="#4e79a7" rx="2"><title>P95: 1320.58 ms</title></rect>
+<text x="648" y="403.81796" text-anchor="middle" font-size="11.5" fill="#222222">1,320.58</text>
+<rect x="678" y="146.71014000000002" width="48" height="313.28986" fill="#f28e2b" rx="2"><title>P95: 8244.47 ms</title></rect>
+<text x="702" y="140.71014000000002" text-anchor="middle" font-size="11.5" fill="#222222">8,244.47</text>
+<text x="675" y="482" text-anchor="middle" font-size="13" fill="#222222">P95</text>
+<rect x="794" y="379.65926" width="48" height="80.34073999999998" fill="#4e79a7" rx="2"><title>P99: 2114.23 ms</title></rect>
+<text x="818" y="373.65926" text-anchor="middle" font-size="11.5" fill="#222222">2,114.23</text>
+<rect x="848" y="140.64914000000005" width="48" height="319.35085999999995" fill="#f28e2b" rx="2"><title>P99: 8403.97 ms</title></rect>
+<text x="872" y="134.64914000000005" text-anchor="middle" font-size="11.5" fill="#222222">8,403.97</text>
+<text x="845" y="482" text-anchor="middle" font-size="13" fill="#222222">P99</text>
+</svg>
