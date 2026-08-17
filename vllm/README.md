@@ -11,6 +11,8 @@ One script to serve **RadixArk/Qwen3.8-27B-NVFP4** with [vLLM](https://github.co
 
 Works fine on a desktop GPU that still drives a display (adaptive `--gpu-memory-utilization` from live `nvidia-smi`).
 
+> **Upstream:** this setup is ripped from [MiaAI-Lab/Qwen3.8-27B-NVFP4-RTX-5090](https://github.com/MiaAI-Lab/Qwen3.8-27B-NVFP4-RTX-5090).
+
 ## Measured
 
 On this class of box (RTX 5090, 32 GB):
