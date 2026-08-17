@@ -1,0 +1,35 @@
+model_list:
+  - model_name: "auto-local"
+    litellm_params:
+      model: "unsloth/Qwen3.8-27B-NVFP4"
+      api_base: "http://vllm-inference:8000/v1"
+      custom_llm_provider: "openai"
+      api_key: "none"                         # Bypasses the SDK initialization error
+      input_cost_per_token: 0.0000004
+      output_cost_per_token: 0.000003
+      allowed_openai_params: ["reasoning_effort"]
+
+    model_info:
+      supports_reasoning: true 
+
+  - model_name: "auto-local"
+    litellm_params:
+      model: "RadixArk/Qwen3.8-27B-NVFP4"
+      api_base: "http://sglang-inference:30000/v1"
+      custom_llm_provider: "openai"
+      api_key: "none"                         # Bypasses the SDK initialization error
+      input_cost_per_token: 0.0000004
+      output_cost_per_token: 0.000003
+      allowed_openai_params: ["reasoning_effort"]
+
+    model_info:
+      supports_reasoning: true 
+
+router_settings:
+  routing_strategy: "least-busy" 
+  allowed_fails: 2               
+  routing_strategy_args:         
+    enable_health_checks: true     
+  fallbacks:
+    - {"auto-local": ["unsloth/Qwen3.8-27B-NVFP4", "RadixArk/Qwen3.8-27B-NVFP4"]}
+

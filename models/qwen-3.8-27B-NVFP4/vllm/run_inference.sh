@@ -5,6 +5,8 @@ docker run --runtime nvidia --gpus all \
     --env "HF_TOKEN=${HF_TOKEN}" \
     -p 8000:8000 \
     --ipc=host \
+    --name vllm-inference \
+    --network ai-lab-inference-net \
     vllm/vllm-openai:latest \
     --model unsloth/Qwen3.8-27B-NVFP4 \
     --kv-cache-dtype fp8 \

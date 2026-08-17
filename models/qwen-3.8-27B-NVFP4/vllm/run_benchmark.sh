@@ -1,6 +1,6 @@
 #!/bin/bash
 
-guidellm run \         
+guidellm run \
   --backend kind=openai_http,target=http://localhost:8000 \
   --profile kind=sweep \
   --constraint kind=max_duration,seconds=30 \

@@ -1,7 +1,8 @@
 #!/bin/bash
 docker run --gpus all \
   --shm-size 32g \
-  --name sglang_inference \
+  --name sglang-inference \
+  --network ai-lab-inference-net \
   -p 30000:30000 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   --env "HF_TOKEN=${HF_TOKEN}" \
