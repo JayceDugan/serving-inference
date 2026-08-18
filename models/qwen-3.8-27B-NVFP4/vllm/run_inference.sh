@@ -8,13 +8,14 @@ docker run --runtime nvidia --gpus all \
     --name vllm-inference \
     --network ai-lab-inference-net \
     vllm/vllm-openai:latest \
-    --model unsloth/Qwen3.8-27B-NVFP4 \
-    --kv-cache-dtype fp8 \
-    --trust-remote-code \
-    --max-model-len 132067 \
-    --max-num-seqs 16 \
-    --gpu-memory-utilization 0.97 \
-    --reasoning-parser qwen3 \
-    --enable-auto-tool-choice \
-    --tool-call-parser qwen3_xml
-
+	--model unsloth/Qwen3.8-27B-NVFP4 \
+	--quantization compressed-tensors \
+	--kv-cache-dtype fp8 \
+	--max-model-len 131072 \
+	--gpu-memory-utilization 0.97 \
+	--max-num-seqs 4 \
+	--speculative-config '{"method":"mtp","num_speculative_tokens":2}' \
+	--enable-prefix-caching \
+	--enable-auto-tool-choice \
+	--tool-call-parser qwen3_coder \
+	--reasoning-parser qwen3
