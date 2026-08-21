@@ -19,11 +19,11 @@ docker run --rm --gpus '"device=0"' \
     --cuda-graph-max-bs-prefill 512 \
     --reasoning-parser qwen3 \
     --tool-call-parser qwen3_coder \
-    --mamba-full-memory-ratio 10 \
+    --mamba-full-memory-ratio 6.08 \
     --host 0.0.0.0 \
     --port 30000 \
     --speculative-algorithm DFLASH \
     --speculative-draft-model-path incoai/Qwen3.8-27B-DFlash2 \
     --speculative-num-draft-tokens 8 \
     --mamba-radix-cache-strategy extra_buffer \
-    --mamba-ssm-dtype float32
+    --mamba-ssm-dtype bfloat16
