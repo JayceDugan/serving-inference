@@ -1,3 +1,6 @@
 [submodule "gpu-burn"]
 	path = gpu-burn
 	url = https://github.com/wilicc/gpu-burn
+[submodule "ninfer"]
+	path = ninfer
+	url = https://github.com/Neroued/ninfer.git
