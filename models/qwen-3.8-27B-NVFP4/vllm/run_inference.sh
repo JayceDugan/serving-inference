@@ -1,6 +1,6 @@
 #!/bin/bash
 
-docker run --runtime nvidia --gpus all \
+docker run --rm --runtime nvidia --gpus all \
     -v ~/.cache/huggingface:/root/.cache/huggingface \
     --env "HF_TOKEN=${HF_TOKEN}" \
     -p 8000:8000 \
