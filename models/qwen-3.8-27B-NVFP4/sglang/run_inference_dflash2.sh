@@ -13,10 +13,10 @@ docker run --rm --gpus '"device=0"' \
     --trust-remote-code \
     --model-path RadixArk/Qwen3.8-27B-NVFP4 \
     --kv-cache-dtype fp8_e4m3 \
-    --mem-fraction-static 0.945 \
+    --mem-fraction-static 0.90 \
     --attention-backend flashinfer \
-    --max-running-requests 1 \
-    --cuda-graph-max-bs 1 \
+    --cuda-graph-max-bs-decode 1 \
+    --cuda-graph-max-bs-prefill 512 \
     --reasoning-parser qwen3 \
     --tool-call-parser qwen3_coder \
     --mamba-full-memory-ratio 10 \
@@ -25,5 +25,5 @@ docker run --rm --gpus '"device=0"' \
     --speculative-algorithm DFLASH \
     --speculative-draft-model-path incoai/Qwen3.8-27B-DFlash2 \
     --speculative-num-draft-tokens 8 \
-    --mamba-radix-cache-strategy extra_buffer_lazy \
+    --mamba-radix-cache-strategy extra_buffer \
     --mamba-ssm-dtype float32
