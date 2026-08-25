@@ -1,23 +1,74 @@
-# LiteLLM quickstart stack: the gateway plus a Postgres database that stores
-# models, virtual keys, and spend logs. Used by https://docs.litellm.ai/docs/proxy/docker_quick_start
+# ai-lab stack.
 #
-# Start it directly:
-#   curl -sSL https://docs.litellm.ai/docker-compose.yml | docker compose -f - up -d
+# Base services (vLLM inference, mirroring
+# models/qwen-3.8-27B-NVFP4/vllm_inference.sh) start with:
+#   docker compose up -d
 #
-# The credentials below are placeholders for local evaluation. Before any real
-# use, download this file and set LITELLM_MASTER_KEY and LITELLM_SALT_KEY to
-# long random values, and pin the image to a release tag instead of `latest`.
+# The litellm services are behind the "litellm" profile and only start when
+# explicitly requested:
+#   docker compose --profile litellm up -d
+
 networks:
   ai-lab-inference-net:
     external: true
 
 services:
+  vllm_inference:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-inference
+    ports:
+      - "8000:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - unsloth/Qwen3.8-27B-NVFP4
+      - --quantization
+      - compressed-tensors
+      - --kv-cache-dtype
+      - fp8
+      - --max-model-len
+      - "131072"
+      - --gpu-memory-utilization
+      - "0.97"
+      - --max-num-seqs
+      - "4"
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":2}'
+      - --enable-prefix-caching
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --reasoning-parser
+      - qwen3
+    networks:
+      - ai-lab-inference-net
+
+  # --- litellm profile -------------------------------------------------------
+  # LiteLLM quickstart stack (gateway + Postgres for models, virtual keys,
+  # and spend logs). See https://docs.litellm.ai/docs/proxy/docker_quick_start
+  #
+  # Credentials below are placeholders for local evaluation. Before any real
+  # use, set LITELLM_MASTER_KEY and LITELLM_SALT_KEY to long random values,
+  # and pin the image to a release tag instead of `latest`.
+
   litellm:
+    profiles: ["litellm"]
     image: docker.litellm.ai/berriai/litellm-database:latest
     ports:
       - "4000:4000"
     environment:
-      LITELLM_MASTER_KEY: VmxmBCr7RVQV@wf6Gbbh
+      LITELLM_MASTER_KEY: VlxmBCr7RVQV@wf6Gbbh
       LITELLM_SALT_KEY: d@rH4ZU!bUcks2wbDLGU
       DATABASE_URL: postgresql://litellm:litellm@litellm_db:5432/litellm
       STORE_MODEL_IN_DB: "True"
@@ -33,6 +84,7 @@ services:
     command: ["--config", "/app/litellm_config.yaml"]
 
   litellm_db:
+    profiles: ["litellm"]
     image: postgres:16
     environment:
       POSTGRES_USER: litellm
