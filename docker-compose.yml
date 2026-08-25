@@ -27,7 +27,7 @@ services:
     networks:
       - ai-lab-inference-net
     volumes:
-      - ./litellm_config.yaml:/app/litellm_config.yaml
+      - ./litellm/litellm_config.yaml:/app/litellm_config.yaml
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["--config", "/app/litellm_config.yaml"]
