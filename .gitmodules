@@ -4,3 +4,6 @@
 [submodule "ninfer"]
 	path = ninfer
 	url = https://github.com/Neroued/ninfer.git
+[submodule "vllm-sm120-nvfp4-mtp"]
+	path = vllm-sm120-nvfp4-mtp
+	url = https://github.com/seanyourhighness/vllm-sm120-nvfp4-mtp.git
