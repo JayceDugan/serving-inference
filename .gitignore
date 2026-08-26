@@ -1,2 +1,3 @@
 ninfer/models
 .env
+.mcp.json

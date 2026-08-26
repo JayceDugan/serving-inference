@@ -124,6 +124,30 @@ services:
     volumes:
       - openwebui_data:/app/backend/data
 
+  # --- stealthy-auto-browse (Camoufox, private browsing for agents) ---------
+  # Camoufox (anti-detect Firefox fork) on a virtual display. JSON HTTP API +
+  # MCP server on :8080 in-container, noVNC on :5900. Runs CPU-only (Mesa
+  # software GL, no GPU passthrough); budget ~5GB RAM while browsing.
+  # Host ports are loopback-only: agents on the compose network reach it at
+  # http://stealthy-browser:8080. Set BROWSER_AUTH_TOKEN before first use.
+  stealthy-browser:
+    image: psyb0t/stealthy-auto-browse:v2.6.7
+    container_name: stealthy-browser
+    shm_size: "2g"
+    ports:
+      - "127.0.0.1:8900:8080"
+      - "127.0.0.1:5900:5900"
+    environment:
+      AUTH_TOKEN: ${BROWSER_AUTH_TOKEN:-}
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://127.0.0.1:8080/health\", timeout=5).status==200 else 1)'"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 10
+    networks:
+      - ai-lab-inference-net
+
 volumes:
   postgres_data:
   openwebui_data:
