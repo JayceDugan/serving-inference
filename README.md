@@ -4,8 +4,11 @@
 > This is my house, my desk, my power bill, and the machine that thinks in it.
 > It exists so I can point at something on my wall and say *that box runs my world*.
 
-![The devbox](docs/devbox.jpg)
-<!-- TODO: photo of the rig. It deserves a good one. -->
+<p align="center">
+  <img src="docs/assets/rig.jpg" alt="The devbox — Threadripper PRO workstation with an RTX 5090 and an RTX 5080" width="720">
+</p>
+
+<p align="center"><em>The rig. Two Blackwell cards, one desk, no cloud in sight.</em></p>
 
 One tower. Two Blackwell GPUs. A pile of pinned containers, speculative decoding,
 and quantized weights that I keep arguing with until they behave. Everything is
@@ -160,7 +163,7 @@ ai-lab/
 ├── vllm-sm120-nvfp4-mtp/     # submodule: NVFP4-KV + MTP-3 build for the 5090
 ├── gpu-burn/                 # submodule: because new rigs must be burned in
 ├── benchmarking/             # guidellm env + sweep script
-└── docs/camoufox-plan.md     # agent browsing design
+└── docs/                     # camoufox-plan.md (agent browsing design), assets/rig.jpg
 ```
 
 ## 🎛️ Commands
