@@ -1,0 +1,158 @@
+# ai-lab local ASR stack (Whisprflow replacement).
+#
+# Deliberately a SEPARATE compose project from the root docker-compose.yml:
+# nothing here shares services, ports, networks, or lifecycle with the main
+# ai-lab stack, and no service in this file runs without the "asr" profile.
+#
+#   cd asr && docker compose --profile asr up -d     # start everything
+#   cd asr && docker compose --profile asr down      # stop everything
+#
+# GPU pinning: every GPU consumer is pinned to the RTX 5080 via
+# deploy.resources.reservations.devices.device_ids (host device index, see
+# `nvidia-smi -L`; default 1). The 5090 (device 0) runs the other vLLM /
+# llama.cpp workloads and must never be touched by this stack. Inside each
+# container the pinned GPU is renumbered to cuda:0 — do NOT also set
+# CUDA_VISIBLE_DEVICES here, that would hide the reserved device.
+#
+# VRAM on the 5080 (16303 MiB total), measured with both engines loaded:
+#   asr-model     --gpu-memory-utilization 0.42 → 6094 MiB (Qwen3-ASR-1.7B bf16, ~4.7 GB weights)
+#   cleanup-model --gpu-memory-utilization 0.45 → 6698 MiB (Qwen3-4B-Instruct-2507-FP8, ~4.2 GB weights)
+#   total device usage incl. desktop compositor: ~12.8 GiB → ~3.4 GiB headroom.
+
+name: ai-lab-asr
+
+services:
+  asr-model:
+    profiles: ["asr"]
+    build:
+      context: ./model-image
+      args:
+        VLLM_BASE: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    image: ai-lab-asr-vllm:latest
+    container_name: asr-model
+    restart: unless-stopped
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_TOKEN: ${HF_TOKEN:-}
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    volumes:
+      # Share the host model cache — weights are pre-fetched with `hf download`.
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    ipc: host
+    ports:
+      # Loopback-only debug port; asr-api reaches it over asr-net.
+      - "127.0.0.1:${ASR_MODEL_DEBUG_PORT:-8010}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ASR_GPU_ID:-1}"]
+              capabilities: [gpu]
+    command:
+      - ${ASR_MODEL_ID:-Qwen/Qwen3-ASR-1.7B}
+      - --served-model-name
+      - qwen3-asr
+      - --gpu-memory-utilization
+      - "${ASR_GPU_MEM_UTIL:-0.42}"
+      - --max-model-len
+      - "8192"
+      - --max-num-seqs
+      - "8"
+    healthcheck:
+      # First start may download ~5 GB of weights; give it room.
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=5).status==200 else 1)'"]
+      interval: 15s
+      timeout: 10s
+      start_period: 600s
+      retries: 40
+    networks:
+      - asr-net
+
+  cleanup-model:
+    profiles: ["asr"]
+    build:
+      context: ./model-image
+      args:
+        VLLM_BASE: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    image: ai-lab-asr-vllm:latest
+    container_name: asr-cleanup-model
+    restart: unless-stopped
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_TOKEN: ${HF_TOKEN:-}
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    volumes:
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    ipc: host
+    ports:
+      - "127.0.0.1:${CLEANUP_MODEL_DEBUG_PORT:-8011}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ASR_GPU_ID:-1}"]
+              capabilities: [gpu]
+    command:
+      - ${CLEANUP_MODEL_ID:-Qwen/Qwen3-4B-Instruct-2507-FP8}
+      - --served-model-name
+      - qwen3-cleanup
+      - --gpu-memory-utilization
+      - "${CLEANUP_GPU_MEM_UTIL:-0.45}"
+      - --max-model-len
+      - "8192"
+      - --max-num-seqs
+      - "8"
+    # Serial GPU bring-up: vLLM's memory profiling asserts free memory is
+    # stable during init, so the second engine must not start while the
+    # first one is still loading onto the same GPU.
+    depends_on:
+      asr-model:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=5).status==200 else 1)'"]
+      interval: 15s
+      timeout: 10s
+      start_period: 600s
+      retries: 40
+    networks:
+      - asr-net
+
+  asr-api:
+    profiles: ["asr"]
+    build: ./api
+    image: ai-lab-asr-api:latest
+    container_name: asr-api
+    restart: unless-stopped
+    ports:
+      # Reachable from the MacBook client on the LAN. Set ASR_API_BIND=127.0.0.1
+      # to keep it local-only.
+      - "${ASR_API_BIND:-0.0.0.0}:${ASR_API_PORT:-8090}:8080"
+    environment:
+      LISTEN_ADDR: ":8080"
+      ASR_BASE_URL: http://asr-model:8000/v1
+      ASR_MODEL_NAME: qwen3-asr
+      CLEANUP_BASE_URL: http://cleanup-model:8000/v1
+      CLEANUP_MODEL_NAME: qwen3-cleanup
+      ASR_API_TOKEN: ${ASR_API_TOKEN:-}
+      MAX_AUDIO_BYTES: "26214400"
+      UPSTREAM_TIMEOUT_SECONDS: "120"
+    depends_on:
+      asr-model:
+        condition: service_healthy
+      cleanup-model:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    networks:
+      - asr-net
+
+networks:
+  asr-net:
+    name: ai-lab-asr_net
+    driver: bridge
