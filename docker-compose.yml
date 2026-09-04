@@ -19,7 +19,7 @@ services:
     ports:
       - "3000:8080"
     environment:
-      OPENAI_API_BASE_URL: http://host.docker.internal:8000/v1
+      OPENAI_API_BASE_URL: http://host.docker.internal:8888/v1
       OPENAI_API_KEY: ${UNSLOTH_API_KEY:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -28,36 +28,6 @@ services:
     volumes:
       - openwebui_data:/app/backend/data
 
-  unsloth_studio:
-    profiles: ["unsloth"]
-    image: unsloth/unsloth:latest
-    container_name: unsloth-studio
-    ports:
-      - "8000:8000"        # Studio UI + OpenAI-compatible API
-      # Optional, if you want the Jupyter notebooks / SSH from the image:
-      # - "8888:8888"      # needs JUPYTER_PASSWORD env (default "unsloth")
-      # - "2222:22"
-    volumes:
-      # Reuse your existing model cache — no re-downloads
-      - ${HOME}/.cache/huggingface:/home/unsloth/.cache/huggingface
-    ipc: host
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    healthcheck:
-      # TCP check only — Studio has no documented /health endpoint
-      test: ["CMD-SHELL", "python3 -c 'import socket; socket.create_connection((\"127.0.0.1\",8000),5).close()'"]
-      interval: 15s
-      timeout: 10s
-      start_period: 60s
-      retries: 20
-    networks:
-      - ai-lab-inference-net
-
   # --- stealthy-auto-browse (Camoufox, private browsing for agents) ---------
   # Camoufox (anti-detect Firefox fork) on a virtual display. JSON HTTP API +
   # MCP server on :8080 in-container, noVNC on :5900. Runs CPU-only (Mesa
@@ -65,6 +35,7 @@ services:
   # Host ports are loopback-only: agents on the compose network reach it at
   # http://stealthy-browser:8080. Set BROWSER_AUTH_TOKEN before first use.
   stealthy-browser:
+    profiles: ["agent-browser"]
     image: psyb0t/stealthy-auto-browse:v2.6.7
     container_name: stealthy-browser
     shm_size: "2g"

@@ -23,7 +23,6 @@ name: ai-lab-asr
 
 services:
   asr-model:
-    profiles: ["asr"]
     build:
       context: ./model-image
       args:
@@ -70,7 +69,6 @@ services:
       - asr-net
 
   cleanup-model:
-    profiles: ["asr"]
     build:
       context: ./model-image
       args:
@@ -120,7 +118,6 @@ services:
       - asr-net
 
   asr-api:
-    profiles: ["asr"]
     build: ./api
     image: ai-lab-asr-api:latest
     container_name: asr-api

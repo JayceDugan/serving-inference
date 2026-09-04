@@ -7,7 +7,8 @@ up: ## Start the vLLM inference service
 	docker compose up -d
 
 up-browser: ## Start the stack plus the stealth browser (Camoufox)
-	docker compose up -d stealthy-browser
+	# TODO: Update this
+	docker compose --profile agent-browser up -d
 
 up-litellm: ## Start vLLM plus the LiteLLM stack (profile: litellm)
 	docker compose --profile litellm up -d
@@ -16,7 +17,7 @@ down: ## Stop the vLLM inference service
 	docker compose down
 
 down-browser: ## Stop and remove the stealth browser container
-	docker compose stop stealthy-browser && docker compose rm -f stealthy-browser
+	docker compose --profile agent-browser down
 
 down-litellm: ## Stop everything including LiteLLM
 	docker compose --profile litellm down
@@ -28,19 +29,28 @@ logs-litellm: ## Follow LiteLLM + Postgres logs
 	docker compose --profile litellm logs -f litellm litellm_db
 
 logs-browser: ## Follow stealth browser logs
-	docker compose logs -f stealthy-browser
+	docker compose --profile lgent-browser logs -f stealthy-browser
 
 ps: ## Show running services
 	docker compose ps
 
 asr-up: ## Start the local ASR stack (profile: asr, pinned to the RTX 5080)
-	docker compose -f asr/docker-compose.yml --profile asr up -d --build
+	docker compose -f asr/docker-compose.yml up -d --build
 
 asr-down: ## Stop and remove the ASR stack
-	docker compose -f asr/docker-compose.yml --profile asr down
+	docker compose -f asr/docker-compose.yml down
 
 asr-logs: ## Follow ASR stack logs
-	docker compose -f asr/docker-compose.yml --profile asr logs -f
+	docker compose -f asr/docker-compose.yml logs -f
 
 asr-test: ## Run the asr-api Go test suite
 	cd asr/api && go test ./...
+
+embeddings-up: ## Start the local ASR stack (profile: asr, pinned to the RTX 5080)
+	docker compose -f embeddings/docker-compose.yml up -d --build
+
+embeddings-down: ## Stop and remove the ASR stack
+	docker compose -f embeddings/docker-compose.yml down
+
+embeddings-logs: ## Follow ASR stack logs
+	docker compose -f embeddings/docker-compose.yml qwen-embeddings logs -f
