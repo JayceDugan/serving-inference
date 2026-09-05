@@ -1,0 +1,15 @@
+{
+  "name": "asr",
+  "version": "1.0.0",
+  "description": "Self-hosted speech-to-text on the war rig. The rig transcribes over the LAN; the MacBook client owns the OS surface (menu bar, hotkey, text injection). Non-streaming only — one audio upload in, one cleaned transcript out.",
+  "main": "index.js",
+  "scripts": {
+    "eval": "promptfoo eval --config evals/promptfooconfig.yaml",
+    "view": "promptfoo view",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

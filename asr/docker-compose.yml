@@ -122,6 +122,10 @@ services:
     image: ai-lab-asr-api:latest
     container_name: asr-api
     restart: unless-stopped
+    volumes:
+      # The cleanup system prompt is the single source of truth shared with
+      # promptfoo (evals/). Edit on the host, then `docker compose restart asr-api`.
+      - ./prompts:/prompts:ro
     ports:
       # Reachable from the MacBook client on the LAN. Set ASR_API_BIND=127.0.0.1
       # to keep it local-only.
@@ -132,6 +136,7 @@ services:
       ASR_MODEL_NAME: qwen3-asr
       CLEANUP_BASE_URL: http://cleanup-model:8000/v1
       CLEANUP_MODEL_NAME: qwen3-cleanup
+      CLEANUP_PROMPT_FILE: /prompts/cleanup-system.txt
       ASR_API_TOKEN: ${ASR_API_TOKEN:-}
       MAX_AUDIO_BYTES: "26214400"
       UPSTREAM_TIMEOUT_SECONDS: "120"

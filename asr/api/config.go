@@ -17,6 +17,9 @@ type Config struct {
 	// Model names sent upstream (match --served-model-name in compose).
 	ASRModelName     string
 	CleanupModelName string
+	// CleanupPromptFile is the path to the cleanup system prompt text file.
+	// It is the single source of truth shared with promptfoo (evals/).
+	CleanupPromptFile string
 	// APIToken, when non-empty, requires "Authorization: Bearer <token>"
 	// on every endpoint except /healthz.
 	APIToken string
@@ -30,14 +33,15 @@ type Config struct {
 // LoadConfig reads configuration from the environment with sane defaults.
 func LoadConfig() Config {
 	return Config{
-		ListenAddr:       envStr("LISTEN_ADDR", ":8080"),
-		ASRBaseURL:       envStr("ASR_BASE_URL", "http://asr-model:8000/v1"),
-		CleanupBaseURL:   envStr("CLEANUP_BASE_URL", "http://cleanup-model:8000/v1"),
-		ASRModelName:     envStr("ASR_MODEL_NAME", "qwen3-asr"),
-		CleanupModelName: envStr("CLEANUP_MODEL_NAME", "qwen3-cleanup"),
-		APIToken:         os.Getenv("ASR_API_TOKEN"),
-		MaxAudioBytes:    envInt64("MAX_AUDIO_BYTES", 25<<20),
-		UpstreamTimeout:  time.Duration(envInt("UPSTREAM_TIMEOUT_SECONDS", 120)) * time.Second,
+		ListenAddr:        envStr("LISTEN_ADDR", ":8080"),
+		ASRBaseURL:        envStr("ASR_BASE_URL", "http://asr-model:8000/v1"),
+		CleanupBaseURL:    envStr("CLEANUP_BASE_URL", "http://cleanup-model:8000/v1"),
+		ASRModelName:      envStr("ASR_MODEL_NAME", "qwen3-asr"),
+		CleanupModelName:  envStr("CLEANUP_MODEL_NAME", "qwen3-cleanup"),
+		CleanupPromptFile: envStr("CLEANUP_PROMPT_FILE", "prompts/cleanup-system.txt"),
+		APIToken:          os.Getenv("ASR_API_TOKEN"),
+		MaxAudioBytes:     envInt64("MAX_AUDIO_BYTES", 25<<20),
+		UpstreamTimeout:   time.Duration(envInt("UPSTREAM_TIMEOUT_SECONDS", 120)) * time.Second,
 	}
 }
 

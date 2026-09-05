@@ -1,3 +1,5 @@
 ninfer/models
 .env
 .mcp.json
+node_modules/
+asr/api/asr-api

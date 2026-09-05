@@ -14,6 +14,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -258,9 +259,19 @@ func bearerToken(r *http.Request) string {
 func main() {
 	cfg := LoadConfig()
 
+	prompt, err := os.ReadFile(cfg.CleanupPromptFile)
+	if err != nil {
+		log.Fatalf("loading cleanup prompt %s: %v", cfg.CleanupPromptFile, err)
+	}
+	cleanupPrompt := strings.TrimSpace(string(prompt))
+	if cleanupPrompt == "" {
+		log.Fatalf("cleanup prompt file %s is empty", cfg.CleanupPromptFile)
+	}
+
 	httpClient := &http.Client{}
 	asr := &ASRClient{BaseURL: cfg.ASRBaseURL, Model: cfg.ASRModelName, HTTP: httpClient}
-	cleanup := &CleanupClient{BaseURL: cfg.CleanupBaseURL, Model: cfg.CleanupModelName, HTTP: httpClient}
+	cleanup := &CleanupClient{BaseURL: cfg.CleanupBaseURL, Model: cfg.CleanupModelName,
+		SystemPrompt: cleanupPrompt, HTTP: httpClient}
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -268,9 +279,9 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Printf("asr-api listening on %s (asr=%s model=%s, cleanup=%s model=%s, auth=%v, max_upload=%d bytes)",
+	log.Printf("asr-api listening on %s (asr=%s model=%s, cleanup=%s model=%s prompt=%s, auth=%v, max_upload=%d bytes)",
 		cfg.ListenAddr, cfg.ASRBaseURL, cfg.ASRModelName,
-		cfg.CleanupBaseURL, cfg.CleanupModelName, cfg.APIToken != "", cfg.MaxAudioBytes)
+		cfg.CleanupBaseURL, cfg.CleanupModelName, cfg.CleanupPromptFile, cfg.APIToken != "", cfg.MaxAudioBytes)
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server error: %v", err)

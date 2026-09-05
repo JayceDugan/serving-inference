@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+
+description: "ASR cleanup model — transcript post-processing smoke eval"
+
+prompts:
+  # Messages-format prompt (file:// is the only form v0.122 accepts for chat
+  # message arrays). The system text must stay in sync with
+  # prompts/cleanup-system.txt, which asr-api loads via CLEANUP_PROMPT_FILE.
+  - id: file://./prompts/cleanup.json
+    label: cleanup-current
+
+providers:
+  # Local vLLM cleanup model (asr-cleanup-model, loopback debug port 8011).
+  - id: openai:chat:qwen3-cleanup
+    label: qwen3-cleanup
+    config:
+      # vLLM serves no API key; the value only satisfies promptfoo's check.
+      apiKey: empty
+      apiBaseUrl: http://127.0.0.1:8011/v1
+      temperature: 0
+
+# Judge model: Unsloth Studio on :8888 (OpenAI-compatible). The auth key comes
+# from the UNSLOTH_API_KEY environment variable.
+defaultTest:
+  options:
+    provider:
+      id: openai:chat:unsloth/Qwen3.8-27B-GGUF
+      config:
+        apiBaseUrl: http://localhost:8888/v1
+        apiKey: '{{env.UNSLOTH_API_KEY}}'
+        temperature: 0
+        showThinking: false
+
+tests:
+  # Smoke suite: proves the pipeline works end-to-end (cleanup model returns a
+  # cleaned transcript, judge grades it). Replace with real cases as the system
+  # prompt gets iterated on.
+  - vars:
+      transcript: "um so the deploy is scheduled for um friday at noon"
+    assert:
+      # Content must survive cleanup.
+      - type: icontains
+        value: friday
+      # Filler words must be removed.
+      - type: javascript
+        value: '!/\b(um|uh|er)\b/i.test(output)'
+
+  - vars:
+      transcript: "the build failed the build failed and we rolled back at nine pm"
+    assert:
+      - type: icontains
+        value: rolled back
+      # Cleanup must not bloat the text.
+      - type: javascript
+        value: output.length <= context.vars.transcript.length * 1.2
+
+  - vars:
+      transcript: "the database migration finished in about four minutes and everything looks fine"
+    assert:
+      # Model-graded: also proves the judge model is reachable and grading.
+      - type: llm-rubric
+        value: >-
+          The output must be a cleaned version of the input transcript in the
+          same language, with no preamble or closing remarks and not wrapped in
+          quotes.

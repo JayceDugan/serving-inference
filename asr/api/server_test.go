@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,7 +19,7 @@ import (
 type stubASR struct {
 	srv *httptest.Server
 
-	calls    atomic.Int32
+	calls atomic.Int32
 }
 
 func newStubASR(t *testing.T, handler func(w http.ResponseWriter, r *http.Request)) *stubASR {
@@ -86,6 +87,10 @@ func newStubCleanup(t *testing.T) *stubCleanup {
 
 func newTestServer(t *testing.T, asrURL, cleanupURL string, mutate func(*Config)) (*httptest.Server, Config) {
 	t.Helper()
+	prompt, err := os.ReadFile("../prompts/cleanup-system.txt")
+	if err != nil {
+		t.Fatalf("loading cleanup prompt: %v", err)
+	}
 	cfg := Config{
 		ListenAddr:       ":0",
 		ASRBaseURL:       asrURL + "/v1",
@@ -101,7 +106,8 @@ func newTestServer(t *testing.T, asrURL, cleanupURL string, mutate func(*Config)
 	httpClient := &http.Client{}
 	api := NewServer(cfg,
 		&ASRClient{BaseURL: cfg.ASRBaseURL, Model: cfg.ASRModelName, HTTP: httpClient},
-		&CleanupClient{BaseURL: cfg.CleanupBaseURL, Model: cfg.CleanupModelName, HTTP: httpClient},
+		&CleanupClient{BaseURL: cfg.CleanupBaseURL, Model: cfg.CleanupModelName,
+			SystemPrompt: string(prompt), HTTP: httpClient},
 	)
 	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(srv.Close)
