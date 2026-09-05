@@ -110,28 +110,6 @@ services:
   # LITELLM_MASTER_KEY and LITELLM_SALT_KEY are read from the environment
   # (e.g. a .env file). Set them to long random values before any real use,
   # and pin the image to a release tag instead of `latest`.
-
-  litellm:
-    profiles: ["litellm"]
-    image: docker.litellm.ai/berriai/litellm-database:latest
-    ports:
-      - "4000:4000"
-    environment:
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
-      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-}
-      DATABASE_URL: postgresql://litellm:litellm@litellm_db:5432/litellm
-      STORE_MODEL_IN_DB: "True"
-    depends_on:
-      litellm_db:
-        condition: service_healthy
-    networks:
-      - ai-lab-inference-net
-    volumes:
-      - ./litellm/litellm_config.yaml:/app/litellm_config.yaml
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    command: ["--config", "/app/litellm_config.yaml"]
-
   litellm_db:
     profiles: ["litellm"]
     image: postgres:16
