@@ -74,23 +74,6 @@ llama-server -m .../Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf \
 still leaves room to keep the desktop alive. Yes — this README was written by the box
 itself, on the model in that command line. Meta enough for a home lab.
 
-### NVFP4 Qwen3.8-27B on a single RTX 5090 — **~130 tok/s**
-
-The party trick, and the reason this repo has a submodule instead of a shrug.
-
-`vllm-sm120-nvfp4-mtp/` is a pinned community vLLM overlay (v0.27.1 + SM120 patch) that
-gets ModelOpt **NVFP4** weights, **NVFP4 KV cache**, and **MTP-3 speculative decoding**
-onto consumer Blackwell:
-
-- **~130 tok/s decode** for the 27B NVFP4 checkpoint on one 5090.
-- **373,797-token KV pool** with MTP-3 armed — 262K context is not a spec sheet number here, it's what actually fits.
-- **704.4 aggregate tok/s at 8 concurrent streams**, every stream ≥ 92.8 tok/s.
-- Byte-identical temperature-zero output, 9/9 needle-at-32K cold *and* prefix-cached, 8/8 tool calls plus 4/4 concurrent structured arguments, 21/21 vision lanes through a **CPU** vision tower so the vision encoder never eats VRAM.
-- Every claim is checksummed and reproducible: immutable image digest, pinned model revision, `SHA256SUMS`, `EVIDENCE.md`.
-
-Also hanging around in `models/qwen-3.8-27B-NVFP4/`: vLLM vs SGLang launch scripts,
-DFlash/MTP variants, and the raw `guidellm` benchmark dumps that settled those arguments.
-
 ---
 
 ## 🎙️ The 5080's Job Description
@@ -160,7 +143,6 @@ ai-lab/
 ├── embeddings/               # Qwen3-Embedding-4B on TEI (CPU)
 ├── litellm/litellm_config.yaml  # auto-local routing + fallbacks
 ├── models/qwen-3.8-27B-NVFP4/# vLLM/SGLang launch + benchmark scripts, results/
-├── vllm-sm120-nvfp4-mtp/     # submodule: NVFP4-KV + MTP-3 build for the 5090
 ├── gpu-burn/                 # submodule: because new rigs must be burned in
 ├── benchmarking/             # guidellm env + sweep script
 └── docs/                     # camoufox-plan.md (agent browsing design), assets/rig.jpg
@@ -179,9 +161,6 @@ make embeddings-up            # Qwen3-Embedding-4B (CPU)
 make ps / logs / asr-logs     # staring at things
 
 make asr-test                 # Go test suite, no GPU required
-
-cd vllm-sm120-nvfp4-mtp && ./start.sh    # the 130 tok/s NVFP4 rig
-./status.sh ; ./verify.sh --full         # gates: needle, determinism, vision, long-decode
 ```
 
 ### Ports
@@ -200,8 +179,7 @@ cd vllm-sm120-nvfp4-mtp && ./start.sh    # the 130 tok/s NVFP4 rig
 ## 🔬 Proof, Not Vibes
 
 Nothing here is "seems fast". `benchmarking/` runs `guidellm` concurrency sweeps against
-both backends and dumps JSON/CSV into `models/qwen-3.8-27B-NVFP4/results/`. The NVFP4/MTP
-release carries a checksummed evidence matrix (`EVIDENCE.md`) and CI integrity checks.
+both backends and dumps JSON/CSV into `models/qwen-3.8-27B-NVFP4/results/`.
 `gpu-burn` exists so that when something gets weird at 3 AM, I can prove it's silicon
 before I blame the quantizer — which is usually the wrong answer, but occasionally isn't.
 
