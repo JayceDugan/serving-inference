@@ -96,7 +96,7 @@ func newTestServer(t *testing.T, asrURL, cleanupURL string, mutate func(*Config)
 		ASRBaseURL:       asrURL + "/v1",
 		CleanupBaseURL:   cleanupURL + "/v1",
 		ASRModelName:     "qwen3-asr",
-		CleanupModelName: "qwen3-cleanup",
+		CleanupModelName: "s1-mini",
 		MaxAudioBytes:    25 << 20,
 		UpstreamTimeout:  5 * time.Second,
 	}
@@ -262,26 +262,31 @@ func TestTranscribeSuccess(t *testing.T) {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"messages"`
-		Temperature *float64 `json:"temperature"`
-		MaxTokens   int      `json:"max_tokens"`
+		Temperature        *float64       `json:"temperature"`
+		MaxTokens          int            `json:"max_tokens"`
+		ChatTemplateKwargs map[string]any `json:"chat_template_kwargs"`
 	}
 	if err := json.Unmarshal(cu.lastBody.Load().([]byte), &chatReq); err != nil {
 		t.Fatalf("cleanup body: %v", err)
 	}
-	if chatReq.Model != "qwen3-cleanup" {
+	if chatReq.Model != "s1-mini" {
 		t.Errorf("cleanup model = %q", chatReq.Model)
 	}
 	if len(chatReq.Messages) != 2 || chatReq.Messages[0].Role != "system" || chatReq.Messages[1].Role != "user" {
 		t.Fatalf("cleanup messages = %+v", chatReq.Messages)
 	}
-	if chatReq.Messages[1].Content != rawText {
-		t.Errorf("cleanup user message = %q, want raw transcript", chatReq.Messages[1].Content)
+	wantUser := "[Styling: semi-formal] [Structure: prose] [Context: general]\n" + rawText
+	if chatReq.Messages[1].Content != wantUser {
+		t.Errorf("cleanup user message = %q, want control line + raw transcript", chatReq.Messages[1].Content)
 	}
 	if !strings.Contains(chatReq.Messages[0].Content, "speech-to-text") {
 		t.Error("system prompt does not describe the post-processing task")
 	}
 	if chatReq.Temperature == nil || *chatReq.Temperature != 0 {
 		t.Errorf("cleanup temperature = %v, want 0", chatReq.Temperature)
+	}
+	if v, ok := chatReq.ChatTemplateKwargs["enable_thinking"]; !ok || v != false {
+		t.Errorf("chat_template_kwargs.enable_thinking = %v, want false", v)
 	}
 	if chatReq.MaxTokens < 64 {
 		t.Errorf("max_tokens = %d, want >= 64", chatReq.MaxTokens)

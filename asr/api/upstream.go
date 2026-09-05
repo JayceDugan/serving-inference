@@ -126,14 +126,16 @@ func (c *ASRClient) Transcribe(ctx context.Context, audio []byte, filename, lang
 	return strings.TrimSpace(payload.Text), nil
 }
 
-// CleanupClient talks to the cleanup instruct model via OpenAI chat
+// CleanupClient talks to the s1-mini text-normalizer model via OpenAI chat
 // completions (POST {base}/chat/completions). SystemPrompt is loaded from a
 // text file at startup (see Config.CleanupPromptFile) — the same file
-// promptfoo reads, so there is one source of truth for both.
+// promptfoo reads, so there is one source of truth for both. Styling selects
+// the register in s1-mini's control line; empty means semi-formal.
 type CleanupClient struct {
 	BaseURL      string
 	Model        string
 	SystemPrompt string
+	Styling      string
 	HTTP         *http.Client
 }
 
@@ -145,6 +147,9 @@ func (c *CleanupClient) Cleanup(ctx context.Context, raw string) (string, error)
 		// Deterministic edits; size the output budget from the input.
 		"temperature": 0,
 		"max_tokens":  cleanupMaxTokens(raw),
+		// s1-mini was trained with Qwen3 thinking off; without this it emits
+		// an empty think block and stops with no usable output.
+		"chat_template_kwargs": map[string]any{"enable_thinking": false},
 	}
 	buf, err := json.Marshal(payload)
 	if err != nil {
@@ -185,19 +190,23 @@ func (c *CleanupClient) Cleanup(ctx context.Context, raw string) (string, error)
 	if len(chat.Choices) == 0 {
 		return "", &UpstreamError{Service: "cleanup", Status: resp.StatusCode, Detail: "no choices in response"}
 	}
-	out := strings.TrimSpace(chat.Choices[0].Message.Content)
-	if out == "" {
-		return "", &UpstreamError{Service: "cleanup", Status: resp.StatusCode, Detail: "empty cleanup output"}
-	}
-	return out, nil
+	// An empty string is a valid result: s1-mini returns one when the input
+	// is nothing but filler or noise.
+	return strings.TrimSpace(chat.Choices[0].Message.Content), nil
 }
 
-// messages builds the two-message chat body. Exported-ish via package tests
-// so prompt content is verifiable.
+// messages builds the two-message chat body in s1-mini's trained input shape:
+// system prompt, then control line + newline + raw transcript as the user
+// message. Exported-ish via package tests so prompt content is verifiable.
 func (c *CleanupClient) messages(raw string) []map[string]string {
+	styling := c.Styling
+	if styling == "" {
+		styling = "semi-formal"
+	}
+	control := "[Styling: " + styling + "] [Structure: prose] [Context: general]"
 	return []map[string]string{
 		{"role": "system", "content": c.SystemPrompt},
-		{"role": "user", "content": raw},
+		{"role": "user", "content": control + "\n" + raw},
 	}
 }
 

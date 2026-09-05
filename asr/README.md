@@ -5,14 +5,14 @@ the MacBook client owns the OS surface (menu bar, hotkey, text injection).
 Non-streaming only — one audio upload in, one cleaned transcript out.
 
 ```
-┌─────────────┐  POST /v1/transcribe   ┌─────────────────── war rig ───────────────────┐
-│  MacBook    │ ────── multipart ────▶ │  asr-api :8090 (Go)                           │
-│  menu bar + │                        │      │                                        │
-│  hotkey     │ ◀──── JSON ─────────── │      ├─▶ asr-model:8000      Qwen3-ASR-1.7B   │
-└─────────────┘                        │      └─▶ cleanup-model:8000  Qwen3-4B-Instruct│
-                                       │                (FP8)                          │
-                                       │   all three pinned to the RTX 5080 (device 1) │
-                                       └───────────────────────────────────────────────┘
+┌─────────────┐  POST /v1/transcribe   ┌─────────────────── war rig ──────────────────────┐
+│  MacBook    │ ────── multipart ────▶ │  asr-api :8090 (Go)                              │
+│  menu bar + │                        │      │                                           │
+│  hotkey     │ ◀──── JSON ─────────── │      ├─▶ asr-model:8000      Qwen3-ASR-1.7B      │
+└─────────────┘                        │      └─▶ cleanup-model:8000  superwhisper/s1-mini│
+                                       │                (0.6B text normalizer)            │
+                                       │   all three pinned to the RTX 5080 (device 1)    │
+                                       └──────────────────────────────────────────────────┘
 ```
 
 The MacBook talks **only** to `asr-api`. The two vLLM services have no
@@ -103,16 +103,26 @@ Notes:
   `/v1/chat/completions` with `audio_url`.
 - Loopback debug port: `127.0.0.1:8010`.
 
-### cleanup-model — Qwen3-4B-Instruct-2507-FP8 (vLLM)
+### cleanup-model — superwhisper/s1-mini (vLLM)
 
-Chosen to fit the VRAM left after asr-model on the 16 GiB 5080: ~4.2 GB FP8
-weights inside a 0.45 utilization budget, native FP8 on Blackwell, strong
-instruction-following for transcript-editing tasks, same Qwen3 family as the
-box's existing serving conventions, non-thinking Instruct variant = low
-latency at temperature 0.
+A 0.6B text normalizer fine-tuned from Qwen3-0.6B (Apache 2.0 + naming
+clause): takes a raw ASR transcript and rewrites it as clean written text —
+fillers removed, false starts resolved to the landed value, punctuation and
+capitalization applied, spoken numbers/dates/currency/emails rendered in
+written form. English only; ~1.2 GB bf16 weights fit easily in a 0.2
+utilization budget on the 5080 (0.15 flaps vLLM's 8192-token KV-cache check
+under profiling variance).
 
-- Same overlay image; flags: `--served-model-name qwen3-cleanup
-  --gpu-memory-utilization 0.45 --max-model-len 8192 --max-num-seqs 8`.
+- Same overlay image; flags: `--served-model-name s1-mini
+  --default-chat-template-kwargs '{"enable_thinking": false}'
+  --gpu-memory-utilization 0.2 --max-model-len 8192 --max-num-seqs 2`.
+- Not a chat model — it follows only its trained input shape: the exact
+  system prompt plus a `[Styling: …] [Structure: …] [Context: …]` control
+  line above the transcript. asr-api builds that shape; `CLEANUP_STYLING`
+  selects the register (default `semi-formal`). Thinking must stay off or the
+  model emits an empty think block and stops.
+- Filler/noise-only input legitimately yields an empty string; asr-api treats
+  that as a valid cleaned result, not a failure.
 - Loopback debug port: `127.0.0.1:8011`.
 - `depends_on: asr-model: service_healthy` — vLLM asserts GPU free memory is
   stable during its memory-profiling step; two engines initializing
@@ -129,7 +139,8 @@ non-root. Config via env (see `.env.example` and `api/config.go`):
 |---|---|---|
 | `LISTEN_ADDR` | `:8080` (in container) | HTTP bind |
 | `ASR_BASE_URL` / `ASR_MODEL_NAME` | `http://asr-model:8000/v1` / `qwen3-asr` | transcription upstream |
-| `CLEANUP_BASE_URL` / `CLEANUP_MODEL_NAME` | `http://cleanup-model:8000/v1` / `qwen3-cleanup` | cleanup upstream |
+| `CLEANUP_BASE_URL` / `CLEANUP_MODEL_NAME` | `http://cleanup-model:8000/v1` / `s1-mini` | cleanup upstream (text normalizer) |
+| `CLEANUP_STYLING` | `semi-formal` | s1-mini register: casual, semi-casual, semi-formal, formal |
 | `ASR_API_TOKEN` | empty | bearer token; empty = no auth (LAN only) |
 | `MAX_AUDIO_BYTES` | `26214400` (25 MiB) | upload cap, enforced on the file part itself |
 | `UPSTREAM_TIMEOUT_SECONDS` | `120` | per-leg upstream timeout |
@@ -138,17 +149,19 @@ non-root. Config via env (see `.env.example` and `api/config.go`):
 
 ```
 RTX 5080 total:                          16303 MiB
-asr-model     EngineCore (util 0.42):     6094 MiB   KV cache 12,800 tokens
-cleanup-model EngineCore (util 0.45):     6698 MiB   KV cache 13,104 tokens
-desktop compositor + Xwayland:              ~15 MiB
+asr-model     EngineCore (util 0.42):     6234 MiB   KV cache 12,784 tokens
+cleanup-model EngineCore (util 0.20):     3246 MiB   KV cache 13,968 tokens
+other processes:                            ~50 MiB
 ─────────────────────────────────────────────────────
-device usage                             ~12.8 GiB → headroom ≈ 3.4 GiB
+device usage                              9528 MiB → headroom ≈ 6.7 GiB
 ```
 
 Headroom knobs: `ASR_GPU_MEM_UTIL` / `CLEANUP_GPU_MEM_UTIL` in `.env`. KV
-cache at these budgets supports ~1.5× concurrency at the full 8192-token
-context per engine — ample for single-user dictation; raise `0.45 → 0.5` on
-cleanup only if you see queueing.
+cache at these budgets supports ~1.6× concurrency at the full 8192-token
+context per engine (cleanup is capped at 2 concurrent sequences by
+`--max-num-seqs`, matching solo serial dictation) — ample for single-user
+dictation; raise `CLEANUP_GPU_MEM_UTIL` if you ever see queueing on the
+cleanup leg.
 
 ## API reference
 

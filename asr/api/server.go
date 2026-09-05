@@ -1,8 +1,8 @@
 // Command asr-api is the client-facing HTTP surface of the local ASR stack.
 //
 // It accepts audio uploads, transcribes them with Qwen3-ASR (vLLM), optionally
-// polishes the raw transcript with a small cleanup instruct model (vLLM chat
-// completions), and returns JSON. This is the only service the MacBook client
+// normalizes the raw transcript with the s1-mini text-normalizer model (vLLM
+// chat completions), and returns JSON. This is the only service the MacBook client
 // should talk to; the model services stay private on the compose network.
 package main
 
@@ -271,7 +271,7 @@ func main() {
 	httpClient := &http.Client{}
 	asr := &ASRClient{BaseURL: cfg.ASRBaseURL, Model: cfg.ASRModelName, HTTP: httpClient}
 	cleanup := &CleanupClient{BaseURL: cfg.CleanupBaseURL, Model: cfg.CleanupModelName,
-		SystemPrompt: cleanupPrompt, HTTP: httpClient}
+		SystemPrompt: cleanupPrompt, Styling: cfg.CleanupStyling, HTTP: httpClient}
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -279,9 +279,9 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Printf("asr-api listening on %s (asr=%s model=%s, cleanup=%s model=%s prompt=%s, auth=%v, max_upload=%d bytes)",
+	log.Printf("asr-api listening on %s (asr=%s model=%s, cleanup=%s model=%s styling=%s prompt=%s, auth=%v, max_upload=%d bytes)",
 		cfg.ListenAddr, cfg.ASRBaseURL, cfg.ASRModelName,
-		cfg.CleanupBaseURL, cfg.CleanupModelName, cfg.CleanupPromptFile, cfg.APIToken != "", cfg.MaxAudioBytes)
+		cfg.CleanupBaseURL, cfg.CleanupModelName, cfg.CleanupStyling, cfg.CleanupPromptFile, cfg.APIToken != "", cfg.MaxAudioBytes)
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server error: %v", err)

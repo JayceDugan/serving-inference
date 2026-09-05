@@ -14,10 +14,9 @@
 # container the pinned GPU is renumbered to cuda:0 — do NOT also set
 # CUDA_VISIBLE_DEVICES here, that would hide the reserved device.
 #
-# VRAM on the 5080 (16303 MiB total), measured with both engines loaded:
-#   asr-model     --gpu-memory-utilization 0.42 → 6094 MiB (Qwen3-ASR-1.7B bf16, ~4.7 GB weights)
-#   cleanup-model --gpu-memory-utilization 0.45 → 6698 MiB (Qwen3-4B-Instruct-2507-FP8, ~4.2 GB weights)
-#   total device usage incl. desktop compositor: ~12.8 GiB → ~3.4 GiB headroom.
+# VRAM on the 5080 (16303 MiB total), both engines pinned here — measured at rest:
+#   asr-model     --gpu-memory-utilization 0.42 → 6847 MiB budget, ~6.2 GiB used (Qwen3-ASR-1.7B bf16, 3.9 GiB weights + 12.8k-token KV cache)
+#   cleanup-model --gpu-memory-utilization 0.2 → 3260 MiB budget, ~3.2 GiB used (superwhisper/s1-mini bf16, 1.1 GiB weights + 14.0k-token KV cache; 0.15 flaps vLLM's 8192-token KV check under profiling variance)
 
 name: ai-lab-asr
 
@@ -93,15 +92,21 @@ services:
               device_ids: ["${ASR_GPU_ID:-1}"]
               capabilities: [gpu]
     command:
-      - ${CLEANUP_MODEL_ID:-Qwen/Qwen3-4B-Instruct-2507-FP8}
+      - ${CLEANUP_MODEL_ID:-superwhisper/s1-mini}
       - --served-model-name
-      - qwen3-cleanup
+      - s1-mini
+      # s1-mini was trained with Qwen3 thinking off; default it off for every
+      # request (asr-api also sends chat_template_kwargs per request).
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
       - --gpu-memory-utilization
-      - "${CLEANUP_GPU_MEM_UTIL:-0.45}"
+      - "${CLEANUP_GPU_MEM_UTIL:-0.2}"
       - --max-model-len
       - "8192"
       - --max-num-seqs
-      - "8"
+      # Solo user, strictly serial dictation — no deep batch queue needed, and
+      # fewer concurrent sequences cut the profiling peak memory.
+      - "2"
     # Serial GPU bring-up: vLLM's memory profiling asserts free memory is
     # stable during init, so the second engine must not start while the
     # first one is still loading onto the same GPU.
@@ -135,7 +140,8 @@ services:
       ASR_BASE_URL: http://asr-model:8000/v1
       ASR_MODEL_NAME: qwen3-asr
       CLEANUP_BASE_URL: http://cleanup-model:8000/v1
-      CLEANUP_MODEL_NAME: qwen3-cleanup
+      CLEANUP_MODEL_NAME: s1-mini
+      CLEANUP_STYLING: ${CLEANUP_STYLING:-semi-formal}
       CLEANUP_PROMPT_FILE: /prompts/cleanup-system.txt
       ASR_API_TOKEN: ${ASR_API_TOKEN:-}
       MAX_AUDIO_BYTES: "26214400"

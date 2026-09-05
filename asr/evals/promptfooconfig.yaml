@@ -1,18 +1,22 @@
 # yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
 
-description: "ASR cleanup model — transcript post-processing smoke eval"
+description: "s1-mini text normalizer — semi-formal cleanup suite"
 
 prompts:
   # Messages-format prompt (file:// is the only form v0.122 accepts for chat
   # message arrays). The system text must stay in sync with
   # prompts/cleanup-system.txt, which asr-api loads via CLEANUP_PROMPT_FILE.
+  # The user message carries s1-mini's control line above {{transcript}} —
+  # the same shape asr-api builds (see api/upstream.go messages()).
   - id: file://./prompts/cleanup.json
     label: cleanup-current
 
 providers:
   # Local vLLM cleanup model (asr-cleanup-model, loopback debug port 8011).
-  - id: openai:chat:qwen3-cleanup
-    label: qwen3-cleanup
+  # Thinking is off server-side (--default-chat-template-kwargs in
+  # docker-compose.yml), so no per-request kwargs are needed here.
+  - id: openai:chat:s1-mini
+    label: s1-mini
     config:
       # vLLM serves no API key; the value only satisfies promptfoo's check.
       apiKey: empty
@@ -32,13 +36,15 @@ defaultTest:
         showThinking: false
 
 tests:
-  # Smoke suite: proves the pipeline works end-to-end (cleanup model returns a
-  # cleaned transcript, judge grades it). Replace with real cases as the system
-  # prompt gets iterated on.
+  # s1-mini suite, semi-formal register (full capitalization + punctuation,
+  # contractions kept, colloquialisms smoothed). Expected substrings are the
+  # model card's measured outputs under this exact control line.
   - vars:
       transcript: "um so the deploy is scheduled for um friday at noon"
     assert:
       # Content must survive cleanup.
+      - type: icontains
+        value: deploy
       - type: icontains
         value: friday
       # Filler words must be removed.
@@ -46,13 +52,81 @@ tests:
         value: '!/\b(um|uh|er)\b/i.test(output)'
 
   - vars:
+      transcript: "i think the answer is forty two no sorry forty three"
+    assert:
+      # Self-correction resolves to the landed value, ITN'd to digits.
+      - type: icontains
+        value: "43"
+      - type: javascript
+        value: '!/42|forty/i.test(output)'
+
+  - vars:
+      transcript: "let's meet at half past two tomorrow uh actually make it three fifteen p m"
+    assert:
+      # Spoken time → written form.
+      - type: icontains
+        value: "3:15pm"
+
+  - vars:
+      transcript: "the invoice came to twenty three thousand four hundred and fifty dollars and it's due on march third twenty twenty six"
+    assert:
+      # Spoken currency + date → written forms.
+      - type: icontains
+        value: "$23,450"
+      - type: icontains
+        value: "March 3, 2026"
+
+  - vars:
+      transcript: "send it to support at superwhisper dot com"
+    assert:
+      # Spoken email address → written form.
+      - type: icontains
+        value: "support@superwhisper.com"
+
+  - vars:
+      transcript: "hmm im gonna be late theres a cute dog outside i cant just walk past him"
+    assert:
+      # Semi-formal: colloquialisms smoothed, contractions kept.
+      - type: icontains
+        value: "going to"
+      - type: javascript
+        value: '!/gonna/i.test(output)'
+      - type: javascript
+        value: "/I'm going to be late/.test(output)"
+
+  - vars:
       transcript: "the build failed the build failed and we rolled back at nine pm"
     assert:
       - type: icontains
         value: rolled back
-      # Cleanup must not bloat the text.
+      # Repeated phrase collapsed; output must not bloat.
       - type: javascript
-        value: output.length <= context.vars.transcript.length * 1.2
+        value: '!/failed.*failed/i.test(output)'
+      - type: javascript
+        value: 'output.length <= context.vars.transcript.length * 1.2'
+
+  - vars:
+      transcript: "we need to ship the release on tuesday morning"
+    assert:
+      # Semi-formal: sentence case + final period.
+      - type: javascript
+        value: '/^[A-Z]/.test(output) && /\.$/.test(output.trim())'
+
+  - vars:
+      transcript: "um uh um"
+    assert:
+      # Filler-only input: the correct output is an empty string.
+      - type: javascript
+        value: 'output.trim() === ""'
+
+  - vars:
+      transcript: "can you remind me to call mom at five p m"
+    assert:
+      # The model normalizes; it must not answer the question in the transcript.
+      - type: icontains
+        value: remind me to call
+      - type: javascript
+        value: '!/^(sure|yes|ok|certainly|will do)/i.test(output)'
 
   - vars:
       transcript: "the database migration finished in about four minutes and everything looks fine"
@@ -61,5 +135,6 @@ tests:
       - type: llm-rubric
         value: >-
           The output must be a cleaned version of the input transcript in the
-          same language, with no preamble or closing remarks and not wrapped in
-          quotes.
+          same language, written in standard semi-formal English (sentence
+          case, punctuation, final period), with no preamble or closing
+          remarks and not wrapped in quotes.

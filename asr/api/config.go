@@ -17,6 +17,9 @@ type Config struct {
 	// Model names sent upstream (match --served-model-name in compose).
 	ASRModelName     string
 	CleanupModelName string
+	// CleanupStyling is the s1-mini control-line register: casual,
+	// semi-casual, semi-formal, or formal.
+	CleanupStyling string
 	// CleanupPromptFile is the path to the cleanup system prompt text file.
 	// It is the single source of truth shared with promptfoo (evals/).
 	CleanupPromptFile string
@@ -37,7 +40,8 @@ func LoadConfig() Config {
 		ASRBaseURL:        envStr("ASR_BASE_URL", "http://asr-model:8000/v1"),
 		CleanupBaseURL:    envStr("CLEANUP_BASE_URL", "http://cleanup-model:8000/v1"),
 		ASRModelName:      envStr("ASR_MODEL_NAME", "qwen3-asr"),
-		CleanupModelName:  envStr("CLEANUP_MODEL_NAME", "qwen3-cleanup"),
+		CleanupModelName:  envStr("CLEANUP_MODEL_NAME", "s1-mini"),
+		CleanupStyling:    envStr("CLEANUP_STYLING", "semi-formal"),
 		CleanupPromptFile: envStr("CLEANUP_PROMPT_FILE", "prompts/cleanup-system.txt"),
 		APIToken:          os.Getenv("ASR_API_TOKEN"),
 		MaxAudioBytes:     envInt64("MAX_AUDIO_BYTES", 25<<20),
