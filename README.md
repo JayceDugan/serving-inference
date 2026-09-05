@@ -39,11 +39,11 @@ local, everything is mine, and no token leaves the building unless I ask it to.
 │  Unsloth Studio (:8888)                          │   │  asr-model      Qwen3-ASR-1.7B    │
 │   └─ llama-server · Qwen3.8 Flash Next Q8        │   │  cleanup-model  Qwen3-4B-Instr FP8│
 │      30 GB weights · 180K ctx · MTP spec decode  │   │  (2 vLLM engines, ~12.8 GiB total)│
-│  NVFP4 Qwen3.8-27B experiments (vLLM/SGLang)     │   │  Never touches the 5090. Ever.    │
+│                                                  │   │  Never touches the 5090. Ever.    │
 └──────────────────────────────────────────────────┘   └───────────────────────────────────┘
 ```
 
-The rule: **nothing in the ASR/embeddings path may reserve a byte of the 5090.**
+The rule: **nothing in the ASR path may reserve a byte of the 5090.**
 The 5090 is for big thinking; the 5080 runs the always-on help desk.
 
 ---
@@ -105,23 +105,13 @@ Two engines on one 16 GB card taught me things: they must come up **serially**
 the `[audio]` extra, so every upload dies with a smug `400 Invalid or unsupported audio file`.
 Hence `asr/model-image/Dockerfile`.
 
-### Embeddings — `embeddings/`
-
-`Qwen/Qwen3-Embedding-4B` (fp16) on Hugging Face **Text Embeddings Inference, CPU build**.
-Deliberately off the GPUs: 24 Zen 4 cores are idle while the 5090 is busy thinking, and
-embedding traffic should never compete with inference for Blackwell silicon.
-
 ---
 
 ## 🌍 How It Powers My Home World
 
 - **Open WebUI** `:3000` → straight at Unsloth Studio on the host gateway. The kitchen-table face of the rig.
 - **Unsloth Studio** `:8888` — model serving, slot save/restore, per-slot context, vision input.
-- **LiteLLM** `:4000` (+ Postgres 16 for keys/spend/models) behind a profile: one `auto-local`
-  endpoint with `least-busy` routing across vLLM and SGLang backends, health checks, and
-  fallbacks. Kill a backend mid-sentence; the client never notices.
 - **ASR** `:8090` — voice-to-text from the laptop, LAN-wide.
-- **Embeddings** `:8080` — retrieval substrate for everything that needs memory.
 - **Stealthy browser** — Camoufox (anti-detect Firefox) on a virtual display, CPU-only with Mesa
   software GL, JSON API + MCP server, noVNC for when I want to watch it work. Loopback-bound;
   agents reach it on the compose network. My agents get to browse without being fingerprinted,
@@ -134,17 +124,13 @@ embedding traffic should never compete with inference for Blackwell silicon.
 
 ```
 ai-lab/
-├── docker-compose.yml        # openwebui + profiles: vllm / litellm / agent-browser
+├── docker-compose.yml        # openwebui + stealthy-browser (profile: agent-browser)
 ├── Makefile                  # the only commands I remember
 ├── setup.sh                  # creates ai-lab-inference-net (do this first)
 ├── asr/                      # speech-to-text stack → RTX 5080 (own compose project, own net)
 │   ├── api/                  # Go facade: /v1/transcribe, /healthz + 16 test funcs
 │   └── model-image/          # vLLM overlay with the [audio] extra
-├── embeddings/               # Qwen3-Embedding-4B on TEI (CPU)
-├── litellm/litellm_config.yaml  # auto-local routing + fallbacks
-├── models/qwen-3.8-27B-NVFP4/# vLLM/SGLang launch + benchmark scripts, results/
 ├── gpu-burn/                 # submodule: because new rigs must be burned in
-├── benchmarking/             # guidellm env + sweep script
 └── docs/                     # camoufox-plan.md (agent browsing design), assets/rig.jpg
 ```
 
@@ -153,11 +139,9 @@ ai-lab/
 ```bash
 ./setup.sh                    # shared docker network, once
 
-make up                       # vLLM inference (profile: vllm)
-make up-litellm               # + LiteLLM gateway & Postgres
+make up                       # Open WebUI
 make up-browser               # + Camoufox stealth browser
 make asr-up                   # ASR stack → pinned to the 5080
-make embeddings-up            # Qwen3-Embedding-4B (CPU)
 make ps / logs / asr-logs     # staring at things
 
 make asr-test                 # Go test suite, no GPU required
@@ -170,23 +154,19 @@ make asr-test                 # Go test suite, no GPU required
 | `8888` | Unsloth Studio (host-native) | `0.0.0.0` |
 | `35115` | llama-server under Studio | loopback |
 | `3000` | Open WebUI | LAN |
-| `4000` | LiteLLM gateway | LAN (profile: litellm) |
 | `8090` | ASR API — the only client-facing ASR surface | LAN |
 | `8010 / 8011` | ASR + cleanup vLLM debug | loopback |
-| `8080` | Qwen3-Embedding-4B (TEI) | LAN |
 | `8900 / 5900` | Camoufox API / noVNC | loopback |
 
 ## 🔬 Proof, Not Vibes
 
-Nothing here is "seems fast". `benchmarking/` runs `guidellm` concurrency sweeps against
-both backends and dumps JSON/CSV into `models/qwen-3.8-27B-NVFP4/results/`.
 `gpu-burn` exists so that when something gets weird at 3 AM, I can prove it's silicon
 before I blame the quantizer — which is usually the wrong answer, but occasionally isn't.
 
 ## ⚠️ Fine Print
 
 This is a home lab on a desk I also sleep near. Endpoints are unauthenticated by default
-and expect a trusted LAN: **do not** expose vLLM, LiteLLM, or `asr-api` to the public
+and expect a trusted LAN: **do not** expose Open WebUI or `asr-api` to the public
 internet without a token and a TLS-terminating proxy in front. Images are pinned where it
 matters and floating where I'm lazy. Model weights are pulled from Hugging Face under their
 own licenses and are never redistributed here. Submodules stay attributed upstream

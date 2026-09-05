@@ -45,8 +45,8 @@ Everything lives in `asr/docker-compose.yml` as its own compose project
 - All three services carry `profiles: ["asr"]`; a bare `docker compose up`
   in `asr/` resolves to an **empty** service list. Nothing starts without the
   profile.
-- The root project (`openwebui`, `stealthy-browser`, profiles
-  `unsloth`/`vllm`/`litellm`) contains no ASR services, so no existing
+- The root project (`openwebui`, plus `stealthy-browser` behind profile
+  `agent-browser`) contains no ASR services, so no existing
   workload can start this stack as a side effect, and `--profile asr` cannot
   disturb them. Profile name `asr` does not collide with anything on the box.
 

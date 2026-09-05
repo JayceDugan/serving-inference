@@ -1,12 +1,11 @@
 # ai-lab stack.
 #
-# Base services (vLLM inference, mirroring
-# models/qwen-3.8-27B-NVFP4/vllm_inference.sh) start with:
+# Base service (Open WebUI, pointing at Unsloth Studio on the host gateway) starts with:
 #   docker compose up -d
 #
-# The litellm services are behind the "litellm" profile and only start when
+# The stealthy browser is behind the "agent-browser" profile and only starts when
 # explicitly requested:
-#   docker compose --profile litellm up -d
+#   docker compose --profile agent-browser up -d
 
 networks:
   ai-lab-inference-net:
@@ -53,80 +52,5 @@ services:
     networks:
       - ai-lab-inference-net
 
-  vllm_inference:
-    profiles: ["vllm"]
-    image: vllm/vllm-openai:latest
-    container_name: vllm-inference
-    ports:
-      - "8000:8000"
-    environment:
-      HF_TOKEN: ${HF_TOKEN:-}
-    volumes:
-      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
-    ipc: host
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    command:
-      - --model
-      - unsloth/Qwen3.8-27B-NVFP4
-      - --quantization
-      - compressed-tensors
-      - --kv-cache-dtype
-      - fp8
-      - --max-model-len
-      - "131072"
-      - --gpu-memory-utilization
-      - "0.97"
-      - --max-num-seqs
-      - "4"
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":2}'
-      - --enable-prefix-caching
-      - --enable-auto-tool-choice
-      - --tool-call-parser
-      - qwen3_coder
-      - --reasoning-parser
-      - qwen3
-    healthcheck:
-      # vLLM can take several minutes to load the 27B model, so give it room
-      # before the first check counts as a failure.
-      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=5).status==200 else 1)'"]
-      interval: 15s
-      timeout: 10s
-      start_period: 300s
-      retries: 60
-    networks:
-      - ai-lab-inference-net
-
-  # --- litellm profile -------------------------------------------------------
-  # LiteLLM quickstart stack (gateway + Postgres for models, virtual keys,
-  # and spend logs). See https://docs.litellm.ai/docs/proxy/docker_quick_start
-  #
-  # LITELLM_MASTER_KEY and LITELLM_SALT_KEY are read from the environment
-  # (e.g. a .env file). Set them to long random values before any real use,
-  # and pin the image to a release tag instead of `latest`.
-  litellm_db:
-    profiles: ["litellm"]
-    image: postgres:16
-    environment:
-      POSTGRES_USER: litellm
-      POSTGRES_PASSWORD: litellm
-      POSTGRES_DB: litellm
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U litellm"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks:
-      - ai-lab-inference-net
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
 volumes:
-  postgres_data:
   openwebui_data:
