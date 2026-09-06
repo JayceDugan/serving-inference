@@ -23,7 +23,7 @@ local, everything is mine, and no token leaves the building unless I ask it to.
 | **Role** | Home AI lab / inference server / "war rig" |
 | **CPU** | AMD Ryzen Threadripper PRO 7965WX — 24 cores / 48 threads, Zen 4, boost to 5.36 GHz |
 | **Motherboard** | ASUS Pro WS WRX90E-SAGE SE (UEFI, 07/2025 firmware) |
-| **Memory** | 256 GB (currently ~180 GB resident with models warm in page cache) |
+| **Memory** | 256 GB (currently ~160 GB resident with models warm in page cache) |
 | **GPU 0** | **NVIDIA GeForce RTX 5090 Founders Edition — 32 GB** (GB202, SM120) → *the brain* |
 | **GPU 1** | **NVIDIA GeForce RTX 5080 — 16 GB** (GB203, SM120) → *the staff* |
 | **Driver / CUDA** | 580.159.03 / CUDA 13.0 |
@@ -35,12 +35,12 @@ local, everything is mine, and no token leaves the building unless I ask it to.
 **Division of labour, enforced by `device_ids` and a healthy fear of OOM:**
 
 ```
-┌──────────────── RTX 5090 · 32 GB ────────────────┐   ┌──────── RTX 5080 · 16 GB ────────┐
-│  Unsloth Studio (:8888)                          │   │  asr-model      Qwen3-ASR-1.7B    │
-│   └─ llama-server · Qwen3.8 Flash Next Q8        │   │  cleanup-model  Qwen3-4B-Instr FP8│
-│      30 GB weights · 180K ctx · MTP spec decode  │   │  (2 vLLM engines, ~12.8 GiB total)│
-│                                                  │   │  Never touches the 5090. Ever.    │
-└──────────────────────────────────────────────────┘   └───────────────────────────────────┘
+┌──────────────── RTX 5090 · 32 GB ────────────────┐   ┌──────── RTX 5080 · 16 GB ───────────┐
+│  Unsloth Studio (:8888)                          │   │  asr-model      Qwen3-ASR-1.7B      │
+│   └─ llama-server · Qwen3.8-27B UD-Q6_K_M        │   │  cleanup-model  Superwhisper s1-mini│
+│      22 GB weights · 150K ctx · ngram+MTP spec   │   │  (2 vLLM engines, ~9.1 GiB total)   │
+│                                                  │   │  Never touches the 5090. Ever.      │
+└──────────────────────────────────────────────────┘   └─────────────────────────────────────┘
 ```
 
 The rule: **nothing in the ASR path may reserve a byte of the 5090.**
@@ -57,21 +57,24 @@ llama.cpp does the actual work on a pinned build in `~/.unsloth/llama.cpp`.
 
 | Model | Quant | Notes |
 |---|---|---|
-| **Qwen3.8 Next Flash** | Q8_K_XL (live load: 6-part Q8 shard set) | The house model. Vision via `mmproj-F16.gguf`, `--flash-attn on`, unified KV, **MTP speculative decoding on by default** (`--spec-default`), thinking mode enabled and preserved across turns. |
-| **DeepSeek V4 0731 Flash** | Q8_K_XL | The second opinion. Rotated in when I want a different brain on the same problem. |
+| **Qwen3.8-27B** | UD-Q6_K_M (live load; a UD-Q8_K_XL sibling sits in the same cache) | The house model. Vision via `mmproj-F16.gguf`, `--flash-attn on`, q8_0 KV cache, **speculative decoding via ngram-mod + draft-MTP**, thinking mode enabled and preserved across turns. |
 
 The live server, verbatim from `ps`, because it's the most honest documentation in this repo:
 
 ```bash
-llama-server -m .../Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf \
-  --port 35115 --parallel 4 --flash-attn on -c 180352 --kv-unified \
-  --spec-default --jinja \
+llama-server -m .../Qwen3.8-27B-UD-Q6_K_M.gguf \
+  --port 48187 --parallel 1 --flash-attn on --no-context-shift \
+  -c 150144 --alias unsloth/Qwen3.8-27B-GGUF \
+  --fit on --metrics --slot-save-path ~/.unsloth/studio/cache/llama-slots \
+  --jinja --cache-type-k q8_0 --cache-type-v q8_0 \
+  --spec-type ngram-mod,draft-mtp --spec-draft-n-max 3 \
+  --spec-ngram-mod-n-match 24 --spec-ngram-mod-n-min 48 --spec-ngram-mod-n-max 64 \
   --chat-template-kwargs '{"enable_thinking": true, "preserve_thinking": true}' \
-  --mmproj .../mmproj-F16.gguf --fit on --fit-ctx 180352 --fit-target 512
+  --mmproj .../mmproj-F16.gguf --load-mode none
 ```
 
-~30 GB of weights, **180,352-token context**, four parallel slots, multimodal, and it
-still leaves room to keep the desktop alive. Yes — this README was written by the box
+~22 GB of weights (UD-Q6_K_M), a **150,144-token context** with q8_0 KV cache, multimodal,
+and it still leaves room to keep the desktop alive. A UD-Q8_K_XL sibling and Qwen3.5-27B GGUF sit in the HF cache for rotation. Yes — this README was written by the box
 itself, on the model in that command line. Meta enough for a home lab.
 
 ---
@@ -86,16 +89,16 @@ One upload in, one cleaned transcript out. Non-streaming, on purpose.
 ```
 MacBook ──POST /v1/transcribe──▶ asr-api :8090 (Go)
                                    ├─▶ Qwen3-ASR-1.7B          (qwen3-asr)
-                                   └─▶ Qwen3-4B-Instruct-2507-FP8 (qwen3-cleanup)
+                                   └─▶ Superwhisper s1-mini     (s1-mini)
 ```
 
 | Piece | What it is | VRAM |
 |---|---|---|
-| `asr-model` | **Qwen3-ASR-1.7B** on vLLM, OpenAI `/v1/audio/transcriptions` | 6,094 MiB (util 0.42) · 12,800-tok KV |
-| `cleanup-model` | **Qwen3-4B-Instruct-2507-FP8** — the *smaller language model*: punctuation, self-corrections, "um" removal, formatting at temp 0 | 6,698 MiB (util 0.45) · 13,104-tok KV |
+| `asr-model` | **Qwen3-ASR-1.7B** on vLLM, OpenAI `/v1/audio/transcriptions` | 6,116 MiB (util 0.42) · 12,800-tok KV |
+| `cleanup-model` | **Superwhisper s1-mini** — the *smaller language model*: control-line styling register (`casual`…`formal`), punctuation, self-corrections, "um" removal, temp 0 | 3,248 MiB (util 0.2) · 13,968-tok KV |
 | `asr-api` | Stdlib-only Go facade, non-root, bearer token optional, 25 MiB upload cap | — |
 
-Measured warm: **11 s of audio → 343 ms** end to end (ASR 166 ms + cleanup 176 ms).
+Measured warm: **15 s of audio → 429 ms** end to end (ASR 326 ms + cleanup 102 ms).
 Cleanup dying never fails a request — you get `raw_text` back with a warning. Dictation
 must survive the little model being down; only the ASR leg is load-bearing.
 
@@ -133,7 +136,9 @@ ai-lab/
 ├── services/
 │   ├── asr/                  # speech-to-text stack → RTX 5080 (always on, own net)
 │   │   ├── api/              # Go facade: /v1/transcribe, /healthz + 16 test funcs
-│   │   └── model-image/      # vLLM overlay with the [audio] extra
+│   │   ├── model-image/      # vLLM overlay with the [audio] extra
+│   │   ├── evals/            # promptfoo config for the cleanup prompt
+│   │   └── prompts/          # cleanup-system.txt (mounted ro into asr-api)
 │   ├── embeddings/           # ONNX embedding service (always on)
 │   └── langfuse/             # submodule: LLM observability, pinned to a release tag
 ├── tools/
@@ -145,12 +150,14 @@ ai-lab/
 
 ```bash
 make up                       # Open WebUI + Langfuse + embedding + ASR
+make down                     # stop everything (incl. profiled services)
 make up-browser               # + Camoufox stealth browser
 make asr-up                   # ASR stack → pinned to the 5080
 make langfuse-logs            # Langfuse web + worker logs
 make ps / logs / asr-logs     # staring at things
 
 make asr-test                 # Go test suite, no GPU required
+make embed-test               # embedding service health check
 ```
 
 ### Ports
@@ -158,7 +165,7 @@ make asr-test                 # Go test suite, no GPU required
 | Port | Service | Bound to |
 |---|---|---|
 | `8888` | Unsloth Studio (host-native) | `0.0.0.0` |
-| `35115` | llama-server under Studio | loopback |
+| dynamic (now `48187`) | llama-server under Studio — Studio grabs a free loopback port per session | loopback |
 | `3000` | Langfuse UI (submodule stack) | LAN |
 | `3100` | Open WebUI | LAN |
 | `8090` | ASR API — the only client-facing ASR surface | LAN |
