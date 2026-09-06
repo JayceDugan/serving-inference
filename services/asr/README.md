@@ -25,10 +25,10 @@ Container Toolkit, weights cached under `~/.cache/huggingface`
 (`hf download Qwen/Qwen3-ASR-1.7B && hf download Qwen/Qwen3-4B-Instruct-2507-FP8`).
 
 ```bash
-cp asr/.env.example asr/.env      # then set ASR_API_TOKEN (see Auth)
-make asr-up                       # = cd asr && docker compose --profile asr up -d --build
+# ASR keys live in the root .env (see .env.example); set ASR_API_TOKEN there (see Auth)
+make asr-up                       # = docker compose --profile asr up -d --build
 curl http://localhost:8090/healthz
-curl -F "file=@asr/api/testdata/jfk.wav" http://localhost:8090/v1/transcribe
+curl -F "file=@services/asr/api/testdata/jfk.wav" http://localhost:8090/v1/transcribe
 ```
 
 Cold start is ~6 minutes (the two vLLM engines load **serially**, by design —
@@ -38,25 +38,19 @@ Stop with `make asr-down`.
 
 ## Compose layout & profile isolation
 
-Everything lives in `asr/docker-compose.yml` as its own compose project
-(`ai-lab-asr`, network `ai-lab-asr_net`) — deliberately separate from the root
-`docker-compose.yml`:
-
-- All three services carry `profiles: ["asr"]`; a bare `docker compose up`
-  in `asr/` resolves to an **empty** service list. Nothing starts without the
-  profile.
-- The root project (`openwebui`, plus `stealthy-browser` behind profile
-  `agent-browser`) contains no ASR services, so no existing
-  workload can start this stack as a side effect, and `--profile asr` cannot
-  disturb them. Profile name `asr` does not collide with anything on the box.
+All services live in the root `docker-compose.yml` — a single project
+(`ai-lab`). The three ASR services carry `profiles: ["asr"]`, so a bare
+`docker compose up -d` starts only Open WebUI: nothing here can come up as a
+side effect of another workload, and using the profile cannot disturb the
+other services. The dedicated network `asr-net` (Docker name
+`ai-lab-asr_net`) keeps ASR off the shared `ai-lab-inference-net`.
 
 Verified via:
 
 ```bash
-docker compose config --services                 # root: openwebui, stealthy-browser (no asr)
-cd asr && docker compose config --services       # empty — profile required
-cd asr && docker compose --profile asr config --services
-# → asr-model, cleanup-model, asr-api
+docker compose config --services            # → openwebui
+docker compose --profile asr config --services
+# → asr-model, cleanup-model, asr-api (plus openwebui)
 ```
 
 ## GPU targeting (RTX 5080 only)
@@ -226,7 +220,7 @@ facade: `curl -F file=@x.wav -F model=qwen3-asr http://127.0.0.1:8010/v1/audio/t
 default = LAN-only. To enable:
 
 ```bash
-echo "ASR_API_TOKEN=$(openssl rand -base64 32)" >> asr/.env
+echo "ASR_API_TOKEN=$(openssl rand -base64 32)" >> .env
 docker compose --profile asr up -d   # recreates asr-api only
 ```
 
@@ -236,7 +230,7 @@ put Caddy/Traefik in front if the LAN isn't trusted.
 ## Testing
 
 ```bash
-make asr-test                     # or: cd asr/api && go test -race ./...
+make asr-test                     # or: cd services/asr/api && go test -race ./...
 ```
 
 16 test functions (subtests included) over `httptest` stubs of both upstreams:

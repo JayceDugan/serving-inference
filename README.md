@@ -78,7 +78,7 @@ itself, on the model in that command line. Meta enough for a home lab.
 
 ## 🎙️ The 5080's Job Description
 
-### ASR stack — dictation that beats the cloud (`asr/`)
+### ASR stack — dictation that beats the cloud (`services/asr/`)
 
 Replaced Whisprflow. A MacBook menu-bar app holds one hotkey; the rig does the rest.
 One upload in, one cleaned transcript out. Non-streaming, on purpose.
@@ -103,7 +103,7 @@ Two engines on one 16 GB card taught me things: they must come up **serially**
 (`depends_on: service_healthy`, or vLLM's memory profiler throws
 `AssertionError: Error in memory profiling`), and the stock vLLM image ships **without**
 the `[audio]` extra, so every upload dies with a smug `400 Invalid or unsupported audio file`.
-Hence `asr/model-image/Dockerfile`.
+Hence `services/asr/model-image/Dockerfile`.
 
 ---
 
@@ -124,21 +124,24 @@ Hence `asr/model-image/Dockerfile`.
 
 ```
 ai-lab/
-├── docker-compose.yml        # openwebui + stealthy-browser (profile: agent-browser)
+├── docker-compose.yml        # single stack, all 7 services (profiles: unsloth, embedding, agent-browser, asr)
 ├── Makefile                  # the only commands I remember
-├── setup.sh                  # creates ai-lab-inference-net (do this first)
-├── asr/                      # speech-to-text stack → RTX 5080 (own compose project, own net)
-│   ├── api/                  # Go facade: /v1/transcribe, /healthz + 16 test funcs
-│   └── model-image/          # vLLM overlay with the [audio] extra
-├── gpu-burn/                 # submodule: because new rigs must be burned in
+├── .env / .env.example       # root + ASR keys; docker compose reads .env automatically
+├── workspaces/
+│   └── unsloth/              # mounted into the unsloth container at /workspace/host
+├── services/
+│   ├── asr/                  # speech-to-text stack → RTX 5080 (profile: asr, own net)
+│   │   ├── api/              # Go facade: /v1/transcribe, /healthz + 16 test funcs
+│   │   └── model-image/      # vLLM overlay with the [audio] extra
+│   └── embeddings/           # ONNX embedding service (profile: embedding)
+├── tools/
+│   └── gpu-burn/             # submodule: because new rigs must be burned in
 └── docs/                     # camoufox-plan.md (agent browsing design), assets/rig.jpg
 ```
 
 ## 🎛️ Commands
 
 ```bash
-./setup.sh                    # shared docker network, once
-
 make up                       # Open WebUI
 make up-browser               # + Camoufox stealth browser
 make asr-up                   # ASR stack → pinned to the 5080

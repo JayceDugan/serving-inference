@@ -1,5 +1,4 @@
-ninfer/models
 .env
 .mcp.json
 node_modules/
-asr/api/asr-api
+services/asr/api/asr-api

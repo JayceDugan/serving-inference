@@ -1,15 +1,25 @@
-# ai-lab stack.
+# ai-lab stack — one compose project for every containerised service.
 #
-# Base service (Open WebUI, pointing at Unsloth Studio on the host gateway) starts with:
-#   docker compose up -d
+# A bare `docker compose up -d` starts only Open WebUI; everything else is
+# profile-gated:
+#   docker compose --profile unsloth        up -d    # Unsloth Studio
+#   docker compose --profile embedding      up -d    # ONNX embedding service
+#   docker compose --profile agent-browser  up -d    # stealthy browser (Camoufox)
+#   docker compose --profile asr            up -d    # ASR stack (2 vLLM engines + api)
 #
-# The stealthy browser is behind the "agent-browser" profile and only starts when
-# explicitly requested:
-#   docker compose --profile agent-browser up -d
+# GPU pinning (ASR): every ASR GPU consumer is pinned to the RTX 5080 via
+# deploy.resources.reservations.devices.device_ids (host device index, see
+# `nvidia-smi -L`; default 1). The 5090 (device 0) runs the other vLLM /
+# llama.cpp workloads and must never be touched by this stack. Inside each
+# container the pinned GPU is renumbered to cuda:0 — do NOT also set
+# CUDA_VISIBLE_DEVICES, that would hide the reserved device.
 
 networks:
   ai-lab-inference-net:
-    external: true
+    name: ai-lab-inference-net   # was external, created by setup.sh; now compose-managed, same name
+  asr-net:
+    name: ai-lab-asr_net         # keeps ASR off the inference network, as before
+    driver: bridge
 
 services:
   openwebui:
@@ -28,6 +38,8 @@ services:
       - openwebui_data:/app/backend/data
 
   unsloth:
+    # Unsloth is unreliable, disabled for now with a profile
+    profiles: ["unsloth"]
     image: unsloth/unsloth
     networks:
       - ai-lab-inference-net
@@ -41,7 +53,7 @@ services:
       JUPYTER_PASSWORD: "choose-a-password"
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:
-      - ./unsloth-lab:/workspace/host
+      - ./workspaces/unsloth:/workspace/host
       - ${HOME}/.cache/huggingface:/workspace/.cache/huggingface
     ipc: host
     ulimits:
@@ -57,7 +69,7 @@ services:
 
   embeddings_model:
     profiles: ["embedding"]
-    build: ./embeddings
+    build: ./services/embeddings
     container_name: embedding_onnx
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
@@ -110,6 +122,149 @@ services:
       retries: 10
     networks:
       - ai-lab-inference-net
+
+  # --- ASR stack (Whisprflow replacement) ------------------------------------
+  asr-model:
+    profiles: ["asr"]
+    build:
+      context: ./services/asr/model-image
+      args:
+        VLLM_BASE: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    image: ai-lab-asr-vllm:latest
+    container_name: asr-model
+    restart: unless-stopped
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_TOKEN: ${HF_TOKEN:-}
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    volumes:
+      # Share the host model cache — weights are pre-fetched with `hf download`.
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    ipc: host
+    ports:
+      # Loopback-only debug port; asr-api reaches it over asr-net.
+      - "127.0.0.1:${ASR_MODEL_DEBUG_PORT:-8010}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ASR_GPU_ID:-1}"]
+              capabilities: [gpu]
+    command:
+      - ${ASR_MODEL_ID:-Qwen/Qwen3-ASR-1.7B}
+      - --served-model-name
+      - qwen3-asr
+      - --gpu-memory-utilization
+      - "${ASR_GPU_MEM_UTIL:-0.42}"
+      - --max-model-len
+      - "8192"
+      - --max-num-seqs
+      - "8"
+    healthcheck:
+      # First start may download ~5 GB of weights; give it room.
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=5).status==200 else 1)'"]
+      interval: 15s
+      timeout: 10s
+      start_period: 600s
+      retries: 40
+    networks:
+      - asr-net
+
+  cleanup-model:
+    profiles: ["asr"]
+    build:
+      context: ./services/asr/model-image
+      args:
+        VLLM_BASE: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    image: ai-lab-asr-vllm:latest
+    container_name: asr-cleanup-model
+    restart: unless-stopped
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_TOKEN: ${HF_TOKEN:-}
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    volumes:
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    ipc: host
+    ports:
+      - "127.0.0.1:${CLEANUP_MODEL_DEBUG_PORT:-8011}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ASR_GPU_ID:-1}"]
+              capabilities: [gpu]
+    command:
+      - ${CLEANUP_MODEL_ID:-superwhisper/s1-mini}
+      - --served-model-name
+      - s1-mini
+      # s1-mini was trained with Qwen3 thinking off; default it off for every
+      # request (asr-api also sends chat_template_kwargs per request).
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --gpu-memory-utilization
+      - "${CLEANUP_GPU_MEM_UTIL:-0.2}"
+      - --max-model-len
+      - "8192"
+      - --max-num-seqs
+      # Solo user, strictly serial dictation — no deep batch queue needed, and
+      # fewer concurrent sequences cut the profiling peak memory.
+      - "2"
+    # Serial GPU bring-up: vLLM's memory profiling asserts free memory is
+    # stable during init, so the second engine must not start while the
+    # first one is still loading onto the same GPU.
+    depends_on:
+      asr-model:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=5).status==200 else 1)'"]
+      interval: 15s
+      timeout: 10s
+      start_period: 600s
+      retries: 40
+    networks:
+      - asr-net
+
+  asr-api:
+    profiles: ["asr"]
+    build: ./services/asr/api
+    image: ai-lab-asr-api:latest
+    container_name: asr-api
+    restart: unless-stopped
+    volumes:
+      # The cleanup system prompt is the single source of truth shared with
+      # promptfoo (evals/). Edit on the host, then `docker compose restart asr-api`.
+      - ./services/asr/prompts:/prompts:ro
+    ports:
+      # Reachable from the MacBook client on the LAN. Set ASR_API_BIND=127.0.0.1
+      # to keep it local-only.
+      - "${ASR_API_BIND:-0.0.0.0}:${ASR_API_PORT:-8090}:8080"
+    environment:
+      LISTEN_ADDR: ":8080"
+      ASR_BASE_URL: http://asr-model:8000/v1
+      ASR_MODEL_NAME: qwen3-asr
+      CLEANUP_BASE_URL: http://cleanup-model:8000/v1
+      CLEANUP_MODEL_NAME: s1-mini
+      CLEANUP_STYLING: ${CLEANUP_STYLING:-semi-formal}
+      CLEANUP_PROMPT_FILE: /prompts/cleanup-system.txt
+      ASR_API_TOKEN: ${ASR_API_TOKEN:-}
+      MAX_AUDIO_BYTES: "26214400"
+      UPSTREAM_TIMEOUT_SECONDS: "120"
+    depends_on:
+      asr-model:
+        condition: service_healthy
+      cleanup-model:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    networks:
+      - asr-net
 
 volumes:
   openwebui_data:
