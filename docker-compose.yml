@@ -36,6 +36,7 @@ services:
       - "8888:8888"
     environment:
       NVIDIA_VISIBLE_DEVICES: "0"
+      CUDA_DEVICE_ORDER: "PCI_BUS_ID"
       UNSLOTH_STUDIO_PASSWORD: "choose-a-password"
       JUPYTER_PASSWORD: "choose-a-password"
       HF_TOKEN: ${HF_TOKEN:-}
