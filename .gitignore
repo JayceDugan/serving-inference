@@ -2,3 +2,7 @@
 .mcp.json
 node_modules/
 services/asr/api/asr-api
+
+workspaces/beszel
+workspaces/beszel-agent
+workspaces/beszel-socket
