@@ -52,5 +52,32 @@ services:
     networks:
       - ai-lab-inference-net
 
+  embedding:
+    profiles: ["embedding"]
+    build: ./embeddings
+    container_name: embedding_onnx
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - MODEL_ID=onnx-community/Qwen3-Embedding-4B-ONNX
+      # Threadripper specific configuration
+      - OMP_NUM_THREADS=24
+      - MKL_NUM_THREADS=24
+      - HF_HUB_DISABLE_SYMLINKS_WARNING=1
+    ports:
+      # Loopback-only; services on the compose network reach it at http://embedding:8080.
+      - "127.0.0.1:8020:8080"
+    volumes:
+      # Maps your local machine cache into the container's standard HF location
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 600s
+      retries: 40
+    networks:
+      - ai-lab-inference-net
+    restart: unless-stopped
+
 volumes:
   openwebui_data:
