@@ -16,7 +16,7 @@ semi-formal control line in [`prompts/cleanup.json`](prompts/cleanup.json).
 **When you change the prompt or the control line, edit both files** — keep them
 in sync (modulo whitespace). Then:
 
-- service: `docker compose --profile asr restart asr-api`
+- service: `docker compose restart asr-api`
 - evals: just re-run — no rebuild needed
 
 Thinking must stay off for s1-mini (`enable_thinking: false`). The vLLM server
@@ -29,7 +29,7 @@ block and stops.
 1. The ASR stack is up (cleanup model healthy):
 
 ```bash
-docker compose --profile asr ps
+docker compose ps asr-model cleanup-model asr-api
 ```
 
 2. Export the judge's auth key:

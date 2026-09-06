@@ -124,16 +124,16 @@ Hence `services/asr/model-image/Dockerfile`.
 
 ```
 ai-lab/
-├── docker-compose.yml        # single stack, all 7 services (profiles: unsloth, embedding, agent-browser, asr)
+├── docker-compose.yml        # single stack, all 7 services (only unsloth + agent-browser are profile-gated)
 ├── Makefile                  # the only commands I remember
 ├── .env / .env.example       # root + ASR keys; docker compose reads .env automatically
 ├── workspaces/
 │   └── unsloth/              # mounted into the unsloth container at /workspace/host
 ├── services/
-│   ├── asr/                  # speech-to-text stack → RTX 5080 (profile: asr, own net)
+│   ├── asr/                  # speech-to-text stack → RTX 5080 (always on, own net)
 │   │   ├── api/              # Go facade: /v1/transcribe, /healthz + 16 test funcs
 │   │   └── model-image/      # vLLM overlay with the [audio] extra
-│   └── embeddings/           # ONNX embedding service (profile: embedding)
+│   └── embeddings/           # ONNX embedding service (always on)
 ├── tools/
 │   └── gpu-burn/             # submodule: because new rigs must be burned in
 └── docs/                     # camoufox-plan.md (agent browsing design), assets/rig.jpg

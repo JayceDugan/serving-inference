@@ -1,11 +1,9 @@
 # ai-lab stack — one compose project for every containerised service.
 #
-# A bare `docker compose up -d` starts only Open WebUI; everything else is
-# profile-gated:
+# A bare `docker compose up -d` starts Open WebUI, the ONNX embedding service,
+# and the ASR stack (2 vLLM engines + api). Only two services stay profile-gated:
 #   docker compose --profile unsloth        up -d    # Unsloth Studio
-#   docker compose --profile embedding      up -d    # ONNX embedding service
 #   docker compose --profile agent-browser  up -d    # stealthy browser (Camoufox)
-#   docker compose --profile asr            up -d    # ASR stack (2 vLLM engines + api)
 #
 # GPU pinning (ASR): every ASR GPU consumer is pinned to the RTX 5080 via
 # deploy.resources.reservations.devices.device_ids (host device index, see
@@ -16,9 +14,9 @@
 
 networks:
   ai-lab-inference-net:
-    name: ai-lab-inference-net   # was external, created by setup.sh; now compose-managed, same name
+    name: ai-lab-inference-net # was external, created by setup.sh; now compose-managed, same name
   asr-net:
-    name: ai-lab-asr_net         # keeps ASR off the inference network, as before
+    name: ai-lab-asr_net # keeps ASR off the inference network, as before
     driver: bridge
 
 services:
@@ -68,7 +66,6 @@ services:
               capabilities: [gpu]
 
   embeddings_model:
-    profiles: ["embedding"]
     build: ./services/embeddings
     container_name: embedding_onnx
     environment:
@@ -125,7 +122,6 @@ services:
 
   # --- ASR stack (Whisprflow replacement) ------------------------------------
   asr-model:
-    profiles: ["asr"]
     build:
       context: ./services/asr/model-image
       args:
@@ -163,7 +159,11 @@ services:
       - "8"
     healthcheck:
       # First start may download ~5 GB of weights; give it room.
-      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=5).status==200 else 1)'"]
+      test:
+        [
+          "CMD-SHELL",
+          'python3 -c ''import urllib.request,sys; sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5).status==200 else 1)''',
+        ]
       interval: 15s
       timeout: 10s
       start_period: 600s
@@ -172,7 +172,6 @@ services:
       - asr-net
 
   cleanup-model:
-    profiles: ["asr"]
     build:
       context: ./services/asr/model-image
       args:
@@ -219,7 +218,11 @@ services:
       asr-model:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=5).status==200 else 1)'"]
+      test:
+        [
+          "CMD-SHELL",
+          'python3 -c ''import urllib.request,sys; sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5).status==200 else 1)''',
+        ]
       interval: 15s
       timeout: 10s
       start_period: 600s
@@ -228,7 +231,6 @@ services:
       - asr-net
 
   asr-api:
-    profiles: ["asr"]
     build: ./services/asr/api
     image: ai-lab-asr-api:latest
     container_name: asr-api
@@ -258,7 +260,11 @@ services:
       cleanup-model:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1",
+        ]
       interval: 15s
       timeout: 5s
       start_period: 10s

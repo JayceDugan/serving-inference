@@ -26,31 +26,33 @@ Container Toolkit, weights cached under `~/.cache/huggingface`
 
 ```bash
 # ASR keys live in the root .env (see .env.example); set ASR_API_TOKEN there (see Auth)
-make asr-up                       # = docker compose --profile asr up -d --build
+make asr-up                       # = docker compose up -d --build asr-model cleanup-model asr-api
 curl http://localhost:8090/healthz
 curl -F "file=@services/asr/api/testdata/jfk.wav" http://localhost:8090/v1/transcribe
 ```
 
 Cold start is ~6 minutes (the two vLLM engines load **serially**, by design —
-see GPU bring-up). `docker compose --profile asr logs -f` or `make asr-logs`.
+see GPU bring-up). Follow with `make asr-logs`.
 
 Stop with `make asr-down`.
 
-## Compose layout & profile isolation
+## Compose layout
 
 All services live in the root `docker-compose.yml` — a single project
-(`ai-lab`). The three ASR services carry `profiles: ["asr"]`, so a bare
-`docker compose up -d` starts only Open WebUI: nothing here can come up as a
-side effect of another workload, and using the profile cannot disturb the
-other services. The dedicated network `asr-net` (Docker name
-`ai-lab-asr_net`) keeps ASR off the shared `ai-lab-inference-net`.
+(`ai-lab`). The ASR services are **not** profile-gated: they come up with any
+`docker compose up`, alongside Open WebUI and the embedding service. Only
+`unsloth` (profile `unsloth`) and `stealthy-browser` (profile
+`agent-browser`) stay behind profiles. The dedicated network `asr-net`
+(Docker name `ai-lab-asr_net`) keeps ASR off the shared
+`ai-lab-inference-net`.
 
 Verified via:
 
 ```bash
-docker compose config --services            # → openwebui
-docker compose --profile asr config --services
-# → asr-model, cleanup-model, asr-api (plus openwebui)
+docker compose config --services
+# → openwebui, embeddings_model, asr-model, cleanup-model, asr-api
+docker compose --profile agent-browser config --services
+# adds stealthy-browser (unsloth is gated by profile unsloth)
 ```
 
 ## GPU targeting (RTX 5080 only)
@@ -221,7 +223,7 @@ default = LAN-only. To enable:
 
 ```bash
 echo "ASR_API_TOKEN=$(openssl rand -base64 32)" >> .env
-docker compose --profile asr up -d   # recreates asr-api only
+docker compose up -d asr-api   # recreates asr-api only
 ```
 
 Clients send `Authorization: Bearer <token>`. `/healthz` stays open. No TLS —
