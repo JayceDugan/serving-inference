@@ -1,9 +1,9 @@
-.PHONY: help up down logs ps up-browser down-browser logs-browser asr-up asr-down asr-logs asr-test embed-up embed-down embed-logs embed-test
+.PHONY: help up down logs ps up-browser down-browser logs-browser asr-up asr-down asr-logs asr-test embed-up embed-down embed-logs embed-test langfuse-logs langfuse-down
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-up: ## Start the stack (Open WebUI + embedding + ASR)
+up: ## Start the stack (Open WebUI + Langfuse + embedding + ASR)
 	docker compose up -d
 
 down: ## Stop the whole stack (all services, incl. profiled ones)
@@ -47,3 +47,9 @@ embed-logs: ## Follow embedding logs
 
 embed-test: ## Check the embedding service health endpoint
 	curl -fsS http://127.0.0.1:8020/health && echo
+
+langfuse-logs: ## Follow Langfuse logs (web + worker)
+	docker compose logs -f langfuse-web langfuse-worker
+
+langfuse-down: ## Stop and remove only the Langfuse containers
+	docker compose down langfuse-web langfuse-worker postgres clickhouse redis minio

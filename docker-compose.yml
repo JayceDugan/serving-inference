@@ -1,7 +1,8 @@
 # ai-lab stack — one compose project for every containerised service.
 #
-# A bare `docker compose up -d` starts Open WebUI, the ONNX embedding service,
-# and the ASR stack (2 vLLM engines + api). Only two services stay profile-gated:
+# A bare `docker compose up -d` starts Open WebUI, Langfuse (included from the
+# services/langfuse submodule), the ONNX embedding service, and the ASR stack
+# (2 vLLM engines + api). Only two services stay profile-gated:
 #   docker compose --profile unsloth        up -d    # Unsloth Studio
 #   docker compose --profile agent-browser  up -d    # stealthy browser (Camoufox)
 #
@@ -19,12 +20,33 @@ networks:
     name: ai-lab-asr_net # keeps ASR off the inference network, as before
     driver: bridge
 
+# --- Langfuse ----------------------------------------------------------------
+# The whole upstream stack (web, worker, postgres, clickhouse, redis, minio) is
+# included verbatim from the submodule — update it with `git submodule update`,
+# never edit the file in place. Upstream keeps its default ports; Open WebUI
+# moved to 3100 to make room for Langfuse's :3000. The two service overrides
+# below only add host-gateway so the LLM playground / evaluators can reach
+# Unsloth Studio on the host at http://host.docker.internal:8888/v1.
+include:
+  - path: ./services/langfuse/docker-compose.yml
+
 services:
+  # Overrides for the included Langfuse stack (deep-merged over upstream):
+  # resolve host.docker.internal inside the containers so Langfuse can call
+  # Unsloth Studio on the host from the playground and LLM-as-a-judge.
+  langfuse-web:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  langfuse-worker:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
     ports:
-      - "3000:8080"
+      - "3100:8080"
     environment:
       OPENAI_API_BASE_URL: http://host.docker.internal:8888/v1
       OPENAI_API_KEY: ${UNSLOTH_API_KEY:-}

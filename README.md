@@ -109,7 +109,8 @@ Hence `services/asr/model-image/Dockerfile`.
 
 ## 🌍 How It Powers My Home World
 
-- **Open WebUI** `:3000` → straight at Unsloth Studio on the host gateway. The kitchen-table face of the rig.
+- **Open WebUI** `:3100` → straight at Unsloth Studio on the host gateway. The kitchen-table face of the rig. (Moved off `:3000` to make room for Langfuse.)
+- **Langfuse** `:3000` — LLM observability for anything that talks to the models. The submodule's whole stack (web, worker, postgres, clickhouse, redis, minio) is included in the root compose; the playground and LLM-as-a-judge reach Unsloth Studio at `http://host.docker.internal:8888/v1` (OpenAI-compatible).
 - **Unsloth Studio** `:8888` — model serving, slot save/restore, per-slot context, vision input.
 - **ASR** `:8090` — voice-to-text from the laptop, LAN-wide.
 - **Stealthy browser** — Camoufox (anti-detect Firefox) on a virtual display, CPU-only with Mesa
@@ -124,7 +125,7 @@ Hence `services/asr/model-image/Dockerfile`.
 
 ```
 ai-lab/
-├── docker-compose.yml        # single stack, all 7 services (only unsloth + agent-browser are profile-gated)
+├── docker-compose.yml        # single stack — WebUI, Langfuse (via submodule), embedding, ASR (only unsloth + agent-browser are profile-gated)
 ├── Makefile                  # the only commands I remember
 ├── .env / .env.example       # root + ASR keys; docker compose reads .env automatically
 ├── workspaces/
@@ -133,7 +134,8 @@ ai-lab/
 │   ├── asr/                  # speech-to-text stack → RTX 5080 (always on, own net)
 │   │   ├── api/              # Go facade: /v1/transcribe, /healthz + 16 test funcs
 │   │   └── model-image/      # vLLM overlay with the [audio] extra
-│   └── embeddings/           # ONNX embedding service (always on)
+│   ├── embeddings/           # ONNX embedding service (always on)
+│   └── langfuse/             # submodule: LLM observability, pinned to a release tag
 ├── tools/
 │   └── gpu-burn/             # submodule: because new rigs must be burned in
 └── docs/                     # camoufox-plan.md (agent browsing design), assets/rig.jpg
@@ -142,9 +144,10 @@ ai-lab/
 ## 🎛️ Commands
 
 ```bash
-make up                       # Open WebUI
+make up                       # Open WebUI + Langfuse + embedding + ASR
 make up-browser               # + Camoufox stealth browser
 make asr-up                   # ASR stack → pinned to the 5080
+make langfuse-logs            # Langfuse web + worker logs
 make ps / logs / asr-logs     # staring at things
 
 make asr-test                 # Go test suite, no GPU required
@@ -156,7 +159,8 @@ make asr-test                 # Go test suite, no GPU required
 |---|---|---|
 | `8888` | Unsloth Studio (host-native) | `0.0.0.0` |
 | `35115` | llama-server under Studio | loopback |
-| `3000` | Open WebUI | LAN |
+| `3000` | Langfuse UI (submodule stack) | LAN |
+| `3100` | Open WebUI | LAN |
 | `8090` | ASR API — the only client-facing ASR surface | LAN |
 | `8010 / 8011` | ASR + cleanup vLLM debug | loopback |
 | `8900 / 5900` | Camoufox API / noVNC | loopback |
