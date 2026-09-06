@@ -32,15 +32,25 @@ include:
 
 services:
   # Overrides for the included Langfuse stack (deep-merged over upstream):
-  # resolve host.docker.internal inside the containers so Langfuse can call
-  # Unsloth Studio on the host from the playground and LLM-as-a-judge.
+  # 1. extra_hosts resolves host.docker.internal inside the containers so
+  #    Langfuse can call Unsloth Studio on the host from the playground and
+  #    LLM-as-a-judge.
+  # 2. LANGFUSE_LLM_CONNECTION_WHITELISTED_HOST — Langfuse's SSRF guard
+  #    hard-blocks "host.docker.internal" (and private IP ranges) for LLM
+  #    connection base URLs; this allowlist is the self-hosted escape hatch
+  #    (docs: self-hosting > configuration > hardening). Exact hostname match,
+  #    checked before every other rule.
   langfuse-web:
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      LANGFUSE_LLM_CONNECTION_WHITELISTED_HOST: host.docker.internal
 
   langfuse-worker:
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      LANGFUSE_LLM_CONNECTION_WHITELISTED_HOST: host.docker.internal
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
