@@ -7,10 +7,7 @@ up: ## Start Open WebUI
 	docker compose up -d
 
 down: ## Stop the whole stack (all services, incl. profiled ones)
-	docker compose down
-
-logs: ## Follow Open WebUI logs
-	docker compose logs -f openwebui
+	docker compose --profile unsloth --profile embedding --profile agent-browser --profile asr down
 
 ps: ## Show running services
 	docker compose ps
