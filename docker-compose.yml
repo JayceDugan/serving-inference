@@ -140,6 +140,7 @@ services:
               capabilities: [gpu]
 
   embeddings_model:
+    profiles: ["embeddings"]
     build: ./services/embeddings
     container_name: embedding_onnx
     environment:
