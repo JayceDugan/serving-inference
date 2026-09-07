@@ -1,0 +1,25 @@
+{
+  "manifestVersion": 1,
+  "id": "89302761-ef38-46b7-9643-5e1dbb3b433b",
+  "name": "ai-lab",
+  "path": "/home/jayce/Development/ai-lab/.zvec-grep",
+  "rootPaths": [
+    {
+      "absolutePath": "/home/jayce/Development/ai-lab",
+      "recursive": true
+    }
+  ],
+  "indexPolicy": "enabled",
+  "embedding": {
+    "provider": "local",
+    "model": "potion-code-16m-v2",
+    "dimension": 256,
+    "metric": "cosine"
+  },
+  "indexVersion": 1,
+  "createdTime": 1788737226432,
+  "updatedTime": 1788740214695,
+  "embeddingRuntime": {
+    "device": "auto"
+  }
+}
