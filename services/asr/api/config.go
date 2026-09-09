@@ -14,9 +14,13 @@ type Config struct {
 	// ASRBaseURL / CleanupBaseURL are OpenAI-compatible roots ending in /v1.
 	ASRBaseURL     string
 	CleanupBaseURL string
+	KokoroBaseURL  string
 	// Model names sent upstream (match --served-model-name in compose).
 	ASRModelName     string
 	CleanupModelName string
+	KokoroModelName  string
+	// KokoroDefaultVoice is the voice used when /v1/speak omits one.
+	KokoroDefaultVoice string
 	// CleanupStyling is the s1-mini control-line register: casual,
 	// semi-casual, semi-formal, or formal.
 	CleanupStyling string
@@ -28,6 +32,8 @@ type Config struct {
 	APIToken string
 	// MaxAudioBytes caps the accepted upload size.
 	MaxAudioBytes int64
+	// MaxSpeakChars caps the length of text accepted by /v1/speak.
+	MaxSpeakChars int
 	// UpstreamTimeout bounds each individual upstream call (per transcription
 	// leg, not per request).
 	UpstreamTimeout time.Duration
@@ -36,16 +42,20 @@ type Config struct {
 // LoadConfig reads configuration from the environment with sane defaults.
 func LoadConfig() Config {
 	return Config{
-		ListenAddr:        envStr("LISTEN_ADDR", ":8080"),
-		ASRBaseURL:        envStr("ASR_BASE_URL", "http://asr-model:8000/v1"),
-		CleanupBaseURL:    envStr("CLEANUP_BASE_URL", "http://cleanup-model:8000/v1"),
-		ASRModelName:      envStr("ASR_MODEL_NAME", "qwen3-asr"),
-		CleanupModelName:  envStr("CLEANUP_MODEL_NAME", "s1-mini"),
-		CleanupStyling:    envStr("CLEANUP_STYLING", "semi-formal"),
-		CleanupPromptFile: envStr("CLEANUP_PROMPT_FILE", "prompts/cleanup-system.txt"),
-		APIToken:          os.Getenv("ASR_API_TOKEN"),
-		MaxAudioBytes:     envInt64("MAX_AUDIO_BYTES", 25<<20),
-		UpstreamTimeout:   time.Duration(envInt("UPSTREAM_TIMEOUT_SECONDS", 120)) * time.Second,
+		ListenAddr:         envStr("LISTEN_ADDR", ":8080"),
+		ASRBaseURL:         envStr("ASR_BASE_URL", "http://asr-model:8000/v1"),
+		CleanupBaseURL:     envStr("CLEANUP_BASE_URL", "http://cleanup-model:8000/v1"),
+		KokoroBaseURL:      envStr("KOKORO_BASE_URL", "http://kokoro-model:8000/v1"),
+		ASRModelName:       envStr("ASR_MODEL_NAME", "qwen3-asr"),
+		CleanupModelName:   envStr("CLEANUP_MODEL_NAME", "s1-mini"),
+		KokoroModelName:    envStr("KOKORO_MODEL_NAME", "kokoro"),
+		KokoroDefaultVoice: envStr("KOKORO_DEFAULT_VOICE", "af_heart"),
+		CleanupStyling:     envStr("CLEANUP_STYLING", "semi-formal"),
+		CleanupPromptFile:  envStr("CLEANUP_PROMPT_FILE", "prompts/cleanup-system.txt"),
+		APIToken:           os.Getenv("ASR_API_TOKEN"),
+		MaxAudioBytes:      envInt64("MAX_AUDIO_BYTES", 25<<20),
+		MaxSpeakChars:      envInt("MAX_SPEAK_CHARS", 10_000),
+		UpstreamTimeout:    time.Duration(envInt("UPSTREAM_TIMEOUT_SECONDS", 120)) * time.Second,
 	}
 }
 

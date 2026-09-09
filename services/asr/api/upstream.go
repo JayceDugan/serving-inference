@@ -16,7 +16,7 @@ import (
 // the upstream HTTP status when the request reached it (0 for transport
 // failures); Deadline tells the handler to answer 504 instead of 502.
 type UpstreamError struct {
-	Service  string // "asr" or "cleanup"
+	Service  string // "asr", "cleanup" or "kokoro"
 	Status   int    // upstream HTTP status, 0 if no response
 	Deadline bool   // request timed out
 	Detail   string // short sanitized snippet of the upstream body
@@ -221,4 +221,58 @@ func cleanupMaxTokens(raw string) int {
 		return 2048
 	}
 	return n
+}
+
+// TTSClient talks to the Kokoro TTS service via its OpenAI-style speech
+// endpoint (POST {base}/audio/speech) and returns the encoded audio bytes.
+type TTSClient struct {
+	BaseURL string // e.g. http://kokoro-model:8000/v1
+	Model   string
+	HTTP    *http.Client
+}
+
+// ttsMaxResponseBytes bounds a synthesized response. 10k characters of text
+// is ~7 minutes of speech at normal pace, ~2 MB of 24 kHz mono PCM16; the cap
+// is generous headroom against a runaway upstream, not an expectation.
+const ttsMaxResponseBytes = 64 << 20
+
+// Speak synthesizes text and returns the raw audio bytes (WAV from upstream).
+func (c *TTSClient) Speak(ctx context.Context, text, voice string, speed float64) ([]byte, error) {
+	payload := map[string]any{
+		"model": c.Model,
+		"input": text,
+		"voice": voice,
+		"speed": speed,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encoding speak request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/audio/speech", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, newUpstreamError("kokoro", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, ttsMaxResponseBytes+1))
+	if err != nil {
+		return nil, newUpstreamError("kokoro", err)
+	}
+	if len(raw) > ttsMaxResponseBytes {
+		return nil, &UpstreamError{Service: "kokoro", Status: resp.StatusCode,
+			Detail: "audio response exceeds size limit"}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &UpstreamError{Service: "kokoro", Status: resp.StatusCode, Detail: bodySnippet(raw)}
+	}
+	if len(raw) == 0 {
+		return nil, &UpstreamError{Service: "kokoro", Status: resp.StatusCode, Detail: "empty audio response"}
+	}
+	return raw, nil
 }

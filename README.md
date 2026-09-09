@@ -38,7 +38,8 @@ local, everything is mine, and no token leaves the building unless I ask it to.
 ┌──────────────── RTX 5090 · 32 GB ────────────────┐   ┌──────── RTX 5080 · 16 GB ───────────┐
 │  Unsloth Studio (:8888)                          │   │  asr-model      Qwen3-ASR-1.7B      │
 │   └─ llama-server · Qwen3.8-27B UD-Q6_K_M        │   │  cleanup-model  Superwhisper s1-mini│
-│      22 GB weights · 150K ctx · ngram+MTP spec   │   │  (2 vLLM engines, ~9.1 GiB total)   │
+│      22 GB weights · 150K ctx · ngram+MTP spec   │   │  kokoro-model   Kokoro-82M TTS      │
+│                                                  │   │  (≈10.6 GiB total, ~5.6 GiB free)   │
 │                                                  │   │  Never touches the 5090. Ever.      │
 └──────────────────────────────────────────────────┘   └─────────────────────────────────────┘
 ```
@@ -81,26 +82,32 @@ itself, on the model in that command line. Meta enough for a home lab.
 
 ## 🎙️ The 5080's Job Description
 
-### ASR stack — dictation that beats the cloud (`services/asr/`)
+### ASR + TTS stack — dictation that beats the cloud (`services/asr/`)
 
 Replaced Whisprflow. A MacBook menu-bar app holds one hotkey; the rig does the rest.
-One upload in, one cleaned transcript out. Non-streaming, on purpose.
+One upload in, one cleaned transcript out. Non-streaming, on purpose. And when
+something needs to be *heard* — a transcript read back, an agent talking — the
+same facade speaks it with Kokoro-82M.
 
 ```
 MacBook ──POST /v1/transcribe──▶ asr-api :8090 (Go)
                                    ├─▶ Qwen3-ASR-1.7B          (qwen3-asr)
-                                   └─▶ Superwhisper s1-mini     (s1-mini)
+                                   ├─▶ Superwhisper s1-mini     (s1-mini)
+MacBook ──POST /v1/speak───────▶ asr-api :8090 (Go)
+                                   └─▶ Kokoro-82M               (kokoro-model, WAV out)
 ```
 
 | Piece | What it is | VRAM |
 |---|---|---|
-| `asr-model` | **Qwen3-ASR-1.7B** on vLLM, OpenAI `/v1/audio/transcriptions` | 6,116 MiB (util 0.42) · 12,800-tok KV |
+| `asr-model` | **Qwen3-ASR-1.7B** on vLLM, OpenAI `/v1/audio/transcriptions` | 6,680 MiB (util 0.42) · 12,800-tok KV |
 | `cleanup-model` | **Superwhisper s1-mini** — the *smaller language model*: control-line styling register (`casual`…`formal`), punctuation, self-corrections, "um" removal, temp 0 | 3,248 MiB (util 0.2) · 13,968-tok KV |
-| `asr-api` | Stdlib-only Go facade, non-root, bearer token optional, 25 MiB upload cap | — |
+| `kokoro-model` | **Kokoro-82M** TTS behind an OpenAI-style `/v1/audio/speech`; 24 kHz mono WAV out, voice + speed selectable | 644 MiB |
+| `asr-api` | Stdlib-only Go facade, non-root, bearer token optional, 25 MiB upload cap / 10k-char speak cap | — |
 
 Measured warm: **15 s of audio → 429 ms** end to end (ASR 326 ms + cleanup 102 ms).
 Cleanup dying never fails a request — you get `raw_text` back with a warning. Dictation
-must survive the little model being down; only the ASR leg is load-bearing.
+must survive the little model being down; only the ASR leg is load-bearing. TTS is its
+own leg: Kokoro failing returns 502/504 and never touches the transcription path.
 
 Two engines on one 16 GB card taught me things: they must come up **serially**
 (`depends_on: service_healthy`, or vLLM's memory profiler throws
@@ -115,7 +122,7 @@ Hence `services/asr/model-image/Dockerfile`.
 - **Open WebUI** `:3100` → straight at Unsloth Studio on the host gateway. The kitchen-table face of the rig. (Moved off `:3000` to make room for Langfuse.)
 - **Langfuse** `:3000` — LLM observability for anything that talks to the models. The submodule's whole stack (web, worker, postgres, clickhouse, redis, minio) is included in the root compose; the playground and LLM-as-a-judge reach Unsloth Studio at `http://host.docker.internal:8888/v1` (OpenAI-compatible).
 - **Unsloth Studio** `:8888` — model serving, slot save/restore, per-slot context, vision input.
-- **ASR** `:8090` — voice-to-text from the laptop, LAN-wide.
+- **ASR + TTS** `:8090` — voice-to-text and text-to-speech (Kokoro) from the laptop, LAN-wide.
 - **Stealthy browser** — Camoufox (anti-detect Firefox) on a virtual display, CPU-only with Mesa
   software GL, JSON API + MCP server, noVNC for when I want to watch it work. Loopback-bound;
   agents reach it on the compose network. My agents get to browse without being fingerprinted,
@@ -134,9 +141,10 @@ ai-lab/
 ├── workspaces/
 │   └── unsloth/              # mounted into the unsloth container at /workspace/host
 ├── services/
-│   ├── asr/                  # speech-to-text stack → RTX 5080 (always on, own net)
-│   │   ├── api/              # Go facade: /v1/transcribe, /healthz + 16 test funcs
+│   ├── asr/                  # speech stack (STT + TTS) → RTX 5080 (always on, own net)
+│   │   ├── api/              # Go facade: /v1/transcribe, /v1/speak, /healthz + 23 test funcs
 │   │   ├── model-image/      # vLLM overlay with the [audio] extra
+│   │   ├── kokoro-image/     # Kokoro-82M TTS behind an OpenAI-style /v1/audio/speech
 │   │   ├── evals/            # promptfoo config for the cleanup prompt
 │   │   └── prompts/          # cleanup-system.txt (mounted ro into asr-api)
 │   ├── embeddings/           # ONNX embedding service (always on)
@@ -169,7 +177,7 @@ make embed-test               # embedding service health check
 | `3000` | Langfuse UI (submodule stack) | LAN |
 | `3100` | Open WebUI | LAN |
 | `8090` | ASR API — the only client-facing ASR surface | LAN |
-| `8010 / 8011` | ASR + cleanup vLLM debug | loopback |
+| `8010 / 8011 / 8012` | ASR + cleanup vLLM debug, Kokoro TTS debug | loopback |
 | `8900 / 5900` | Camoufox API / noVNC | loopback |
 
 ## 🔬 Proof, Not Vibes

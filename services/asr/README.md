@@ -1,17 +1,17 @@
-# Local ASR Service (Whisprflow replacement)
+# Local ASR + TTS Service (Whisprflow replacement)
 
-Self-hosted speech-to-text on the war rig. The rig transcribes over the LAN;
-the MacBook client owns the OS surface (menu bar, hotkey, text injection).
-Non-streaming only — one audio upload in, one cleaned transcript out.
-
+Self-hosted speech on the war rig. The rig transcribes over the LAN and can
+speak text back; the MacBook client owns the OS surface (menu bar, hotkey,
+text injection). Non-streaming only — one audio upload in, one cleaned
+transcript out; one text post in, one WAV out.
 ```
 ┌─────────────┐  POST /v1/transcribe   ┌─────────────────── war rig ──────────────────────┐
 │  MacBook    │ ────── multipart ────▶ │  asr-api :8090 (Go)                              │
 │  menu bar + │                        │      │                                           │
 │  hotkey     │ ◀──── JSON ─────────── │      ├─▶ asr-model:8000      Qwen3-ASR-1.7B      │
-└─────────────┘                        │      └─▶ cleanup-model:8000  superwhisper/s1-mini│
-                                       │                (0.6B text normalizer)            │
-                                       │   all three pinned to the RTX 5080 (device 1)    │
+└─────────────┘                        │      ├─▶ cleanup-model:8000  superwhisper/s1-mini│
+                                       │      └─▶ kokoro-model:8000   Kokoro-82M TTS      │
+                                       │   all GPU consumers pinned to the RTX 5080 (dev. 1)│
                                        └──────────────────────────────────────────────────┘
 ```
 
@@ -26,9 +26,11 @@ Container Toolkit, weights cached under `~/.cache/huggingface`
 
 ```bash
 # ASR keys live in the root .env (see .env.example); set ASR_API_TOKEN there (see Auth)
-make asr-up                       # = docker compose up -d --build asr-model cleanup-model asr-api
+make asr-up                       # = docker compose up -d --build asr-model cleanup-model kokoro-model asr-api
 curl http://localhost:8090/healthz
 curl -F "file=@services/asr/api/testdata/jfk.wav" http://localhost:8090/v1/transcribe
+curl -X POST http://localhost:8090/v1/speak -H 'Content-Type: application/json' \
+     -d '{"text":"The war rig says hello.","voice":"af_heart"}' -o hello.wav
 ```
 
 Cold start is ~6 minutes (the two vLLM engines load **serially**, by design —
@@ -50,7 +52,7 @@ Verified via:
 
 ```bash
 docker compose config --services
-# → openwebui, embeddings_model, asr-model, cleanup-model, asr-api
+# → openwebui, embeddings_model, asr-model, cleanup-model, kokoro-model, asr-api
 docker compose --profile agent-browser config --services
 # adds stealthy-browser (unsloth is gated by profile unsloth)
 ```
@@ -58,7 +60,7 @@ docker compose --profile agent-browser config --services
 ## GPU targeting (RTX 5080 only)
 
 The 5090 (host device 0) runs the other llama.cpp/vLLM workloads and must stay
-untouched. Both GPU consumers pin with:
+untouched. All three GPU consumers pin with:
 
 ```yaml
 deploy:
@@ -126,6 +128,31 @@ under profiling variance).
   Serial bring-up avoids this deterministically (also on host reboot, since
   dockerd honors compose start order for `restart: unless-stopped`).
 
+### kokoro-model — hexgrad/Kokoro-82M (FastAPI)
+
+The TTS leg. 82M-parameter open-weight model (~325 MB fp16 weights, ~0.5 GiB
+VRAM warm) served behind an OpenAI-style `POST /v1/audio/speech` by a small
+FastAPI app (`kokoro-image/server.py`, image `ai-lab-kokoro:latest`).
+Kokoro generates 24 kHz mono float32; the server writes it as WAV, so the
+response needs no client-side decoding beyond any audio framework.
+
+- Language: one pipeline per process, selected by `KOKORO_LANG_CODE`
+  (`a` = American English default, `b` = British). Voice codes must match the
+  prefix (`af_*`, `am_*`, `bf_*`, `bm_*`); a mismatched voice is rejected with
+  a 400 naming the available voices.
+- Voices: the full hexgrad set (e.g. `af_heart`, `af_nicole`, `am_adam`,
+  `bf_emma`). `KOKORO_DEFAULT_VOICE` picks the fallback for requests that omit
+  `voice`.
+- Speed: `speed` ∈ [0.5, 2.0], default 1.0 (pass-through to Kokoro's
+  generator).
+- Loopback debug port: `127.0.0.1:8012` (`KOKORO_MODEL_DEBUG_PORT`).
+- First start downloads ~0.4 GB of weights + voice packs from HF into the
+  shared host cache (the healthcheck allows up to 10 min for it); afterwards
+  startup is ~30 s (torch import + model load).
+- `depends_on: asr-model: service_healthy` — same serial bring-up rule as
+  cleanup-model, so its weight load never races vLLM's memory-profiling
+  window on the shared card.
+
 ### asr-api — Go facade (the only client-facing surface)
 
 Stdlib-only Go 1.25 service (`api/`), multi-stage Dockerfile → alpine, runs
@@ -136,20 +163,23 @@ non-root. Config via env (see `.env.example` and `api/config.go`):
 | `LISTEN_ADDR` | `:8080` (in container) | HTTP bind |
 | `ASR_BASE_URL` / `ASR_MODEL_NAME` | `http://asr-model:8000/v1` / `qwen3-asr` | transcription upstream |
 | `CLEANUP_BASE_URL` / `CLEANUP_MODEL_NAME` | `http://cleanup-model:8000/v1` / `s1-mini` | cleanup upstream (text normalizer) |
+| `KOKORO_BASE_URL` / `KOKORO_MODEL_NAME` | `http://kokoro-model:8000/v1` / `kokoro` | TTS upstream |
+| `KOKORO_DEFAULT_VOICE` | `af_heart` | voice used when a speak request omits one |
 | `CLEANUP_STYLING` | `semi-formal` | s1-mini register: casual, semi-casual, semi-formal, formal |
 | `ASR_API_TOKEN` | empty | bearer token; empty = no auth (LAN only) |
 | `MAX_AUDIO_BYTES` | `26214400` (25 MiB) | upload cap, enforced on the file part itself |
+| `MAX_SPEAK_CHARS` | `10000` | text cap for /v1/speak (Kokoro handles long text via splitting) |
 | `UPSTREAM_TIMEOUT_SECONDS` | `120` | per-leg upstream timeout |
 
-## VRAM budget (measured, both engines loaded)
+## VRAM budget (measured, all three model services loaded)
 
 ```
 RTX 5080 total:                          16303 MiB
-asr-model     EngineCore (util 0.42):     6234 MiB   KV cache 12,784 tokens
-cleanup-model EngineCore (util 0.20):     3246 MiB   KV cache 13,968 tokens
-other processes:                            ~50 MiB
+asr-model     EngineCore (util 0.42):     6680 MiB   KV cache 12,784 tokens
+cleanup-model EngineCore (util 0.20):     3248 MiB   KV cache 13,968 tokens
+kokoro-model  FastAPI + Kokoro-82M:        644 MiB   (weights + CUDA context)
 ─────────────────────────────────────────────────────
-device usage                              9528 MiB → headroom ≈ 6.7 GiB
+device usage                             10572 MiB → headroom ≈ 5.6 GiB
 ```
 
 Headroom knobs: `ASR_GPU_MEM_UTIL` / `CLEANUP_GPU_MEM_UTIL` in `.env`. KV
@@ -200,11 +230,40 @@ returns 200 with `text == raw_text`, `cleanup_applied: false`, and a
 `warning`. Dictation must survive the cleanup engine being down; only the ASR
 leg is load-bearing.
 
+### `POST /v1/speak`
+
+`application/json`:
+
+| Field | Required | Notes |
+|---|---|---|
+| `text` | yes | text to synthesize; missing/whitespace-only → 400. Hard cap `MAX_SPEAK_CHARS` (default 10,000) → 413 |
+| `voice` | no | Kokoro voice code (`af_heart`, `am_adam`, `bf_emma`, …). Must match the pipeline language prefix; omitted → `KOKORO_DEFAULT_VOICE` |
+| `speed` | no | float in [0.5, 2.0], default 1.0 |
+
+file; there is no JSON wrapper. Warm generation is far faster than real time
+(~30 ms for a short sentence); the first request that uses a given voice can
+take a few seconds while Kokoro fetches that voice pack from HF.
+
+Error contract (JSON `{"error":{"message","type"}}`, same shape as transcribe):
+
+| Status | type | Cause |
+|---|---|---|
+| 400 | `invalid_request` | missing/empty `text`, non-JSON body, unknown voice, out-of-range `speed` |
+| 413 | `payload_too_long` | `text` exceeds `MAX_SPEAK_CHARS` |
+| 502 | `upstream_error` | Kokoro engine error or malformed upstream response |
+| 504 | `upstream_timeout` | TTS leg exceeded `UPSTREAM_TIMEOUT_SECONDS` |
+
+Unlike cleanup, a TTS failure **does** fail the request — there is no fallback for
+speech. The transcription path is unaffected either way; the legs are independent.
+
+Direct-to-model debugging bypasses the facade:
+`curl -X POST http://127.0.0.1:8012/v1/audio/speech -H 'Content-Type: application/json' -d '{"model":"kokoro","input":"hello","voice":"af_heart"}' -o out.wav`.
+
 ### `GET /healthz`
 
 `{"status":"ok"}` — always open (no auth) for container healthchecks. Use it
 as client readiness signal; it only answers once `asr-api` is up, which
-compose gates on both engines being healthy.
+compose gates on all three model services being healthy.
 
 ### Verified timings (warm engine)
 
@@ -235,11 +294,13 @@ put Caddy/Traefik in front if the LAN isn't trusted.
 make asr-test                     # or: cd services/asr/api && go test -race ./...
 ```
 
-16 test functions (subtests included) over `httptest` stubs of both upstreams:
-request forwarding fidelity (exact audio bytes, multipart fields, model names,
-chat-body prompt content), cleanup on/off parsing, ASR error → 502, malformed
-upstream JSON → 502, cleanup failure/timeout → raw fallback with warning, ASR
-timeout → 504, missing/empty/non-multipart/oversized uploads, routing 404/405,
+23 test functions (subtests included) over `httptest` stubs of all three
+upstreams: request forwarding fidelity (exact audio bytes, multipart fields,
+model names, chat-body prompt content), cleanup on/off parsing, ASR error → 502,
+malformed upstream JSON → 502, cleanup failure/timeout → raw fallback with
+warning, ASR timeout → 504, missing/empty/non-multipart/oversized uploads, speak
+forwarding fidelity (JSON fields, voice/speed defaults), speak error mapping
+(400 empty text / bad speed, 413 too long, 502, 504), routing 404/405,
 bearer-auth matrix, `max_tokens` sizing. No live GPU needed for tests.
 
 ## Troubleshooting (all of these were actually hit)
@@ -247,9 +308,10 @@ bearer-auth matrix, `max_tokens` sizing. No live GPU needed for tests.
 | Symptom | Cause / fix |
 |---|---|
 | 400 `Invalid or unsupported audio file` from vLLM on any format | Base image lacks `[audio]` extra → rebuild the overlay (`make asr-up` already builds) and recreate; check `docker exec asr-model python3 -c "import soundfile"`. |
-| `AssertionError: Error in memory profiling ... release GPU memory while vLLM is profiling` | Two engines initializing concurrently on one GPU. Keep the `depends_on: service_healthy` chain on `cleanup-model`. |
+| `AssertionError: Error in memory profiling ... release GPU memory while vLLM is profiling` | Two engines initializing concurrently on one GPU. Keep the `depends_on: service_healthy` chain — `cleanup-model` and `kokoro-model` both gate on `asr-model`. |
 | Warning: `you should provide the model as a positional argument` | vLLM 0.28 deprecation; compose already uses positional form. |
 | `rope_parameters` FutureWarning in asr-model logs | Harmless transformers version noise; transcription unaffected. |
+| 400 from /v1/speak: `unknown voice ... available: af_..., am_...` | Voice prefix doesn't match the pipeline language (`KOKORO_LANG_CODE`). American voices are `af_*`/`am_*`; for British set `KOKORO_LANG_CODE=b` and use `bf_*`/`bm_*`. |
 | Stack not on the 5080 after moving GPUs / re-seating | `nvidia-smi -L` → set `ASR_GPU_ID` in `.env`; recreate. |
 | First request slow | Cold engine: bring-up takes ~6 min and compose blocks `asr-api` until both healthchecks pass; poll `/healthz`. |
 

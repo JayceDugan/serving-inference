@@ -83,22 +83,62 @@ func newStubCleanup(t *testing.T) *stubCleanup {
 	return c
 }
 
+type stubTTS struct {
+	srv *httptest.Server
+
+	calls     atomic.Int32
+	lastBody  atomic.Value // []byte JSON body
+	respCode  int
+	respAudio []byte
+	handlerFn func(w http.ResponseWriter, r *http.Request)
+}
+
+func newStubTTS(t *testing.T) *stubTTS {
+	s := &stubTTS{respCode: http.StatusOK, respAudio: []byte("RIFFfake-wav-bytes")}
+	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.calls.Add(1)
+		if r.URL.Path != "/v1/audio/speech" {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		s.lastBody.Store(body)
+		if s.handlerFn != nil {
+			s.handlerFn(w, r)
+			return
+		}
+		if s.respCode != http.StatusOK {
+			http.Error(w, "kokoro down", s.respCode)
+			return
+		}
+		w.Header().Set("Content-Type", "audio/wav")
+		_, _ = w.Write(s.respAudio)
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
 // --- test harness -----------------------------------------------------------
 
-func newTestServer(t *testing.T, asrURL, cleanupURL string, mutate func(*Config)) (*httptest.Server, Config) {
+func newTestServer(t *testing.T, asrURL, cleanupURL string, mutate func(*Config)) (*httptest.Server, Config, *stubTTS) {
 	t.Helper()
 	prompt, err := os.ReadFile("../prompts/cleanup-system.txt")
 	if err != nil {
 		t.Fatalf("loading cleanup prompt: %v", err)
 	}
+	tts := newStubTTS(t)
 	cfg := Config{
-		ListenAddr:       ":0",
-		ASRBaseURL:       asrURL + "/v1",
-		CleanupBaseURL:   cleanupURL + "/v1",
-		ASRModelName:     "qwen3-asr",
-		CleanupModelName: "s1-mini",
-		MaxAudioBytes:    25 << 20,
-		UpstreamTimeout:  5 * time.Second,
+		ListenAddr:         ":0",
+		ASRBaseURL:         asrURL + "/v1",
+		CleanupBaseURL:     cleanupURL + "/v1",
+		KokoroBaseURL:      tts.srv.URL + "/v1",
+		ASRModelName:       "qwen3-asr",
+		CleanupModelName:   "s1-mini",
+		KokoroModelName:    "kokoro",
+		KokoroDefaultVoice: "af_heart",
+		MaxAudioBytes:      25 << 20,
+		MaxSpeakChars:      10_000,
+		UpstreamTimeout:    5 * time.Second,
 	}
 	if mutate != nil {
 		mutate(&cfg)
@@ -108,10 +148,11 @@ func newTestServer(t *testing.T, asrURL, cleanupURL string, mutate func(*Config)
 		&ASRClient{BaseURL: cfg.ASRBaseURL, Model: cfg.ASRModelName, HTTP: httpClient},
 		&CleanupClient{BaseURL: cfg.CleanupBaseURL, Model: cfg.CleanupModelName,
 			SystemPrompt: string(prompt), HTTP: httpClient},
+		&TTSClient{BaseURL: cfg.KokoroBaseURL, Model: cfg.KokoroModelName, HTTP: httpClient},
 	)
 	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(srv.Close)
-	return srv, cfg
+	return srv, cfg, tts
 }
 
 // postTranscribe sends a multipart request. Passing fields with the key "file"
@@ -178,7 +219,7 @@ func decodeError(t *testing.T, resp *http.Response) errorBody {
 func TestHealthz(t *testing.T) {
 	asr := newStubASR(t, stubASROK("x"))
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 
 	resp, err := http.Get(srv.URL + "/healthz")
 	if err != nil {
@@ -222,7 +263,7 @@ func TestTranscribeSuccess(t *testing.T) {
 	cu := newStubCleanup(t)
 	cu.respText = cleaned
 
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 
 	audio := []byte("RIFFfake-wav-bytes")
 	resp := postTranscribe(t, srv.URL+"/v1/transcribe", audio,
@@ -300,7 +341,7 @@ func TestTranscribeSuccess(t *testing.T) {
 func TestTranscribeCleanupDisabled(t *testing.T) {
 	asr := newStubASR(t, stubASROK("raw words"))
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 
 	resp := postTranscribe(t, srv.URL+"/v1/transcribe", []byte("audio"), map[string]string{"cleanup": "false"}, nil)
 	if resp.StatusCode != http.StatusOK {
@@ -320,7 +361,7 @@ func TestTranscribeCleanupOffValues(t *testing.T) {
 		t.Run(v, func(t *testing.T) {
 			asr := newStubASR(t, stubASROK("raw"))
 			cu := newStubCleanup(t)
-			srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+			srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 			resp := postTranscribe(t, srv.URL+"/v1/transcribe", []byte("a"), map[string]string{"cleanup": v}, nil)
 			if resp.StatusCode != 200 {
 				t.Fatalf("status %d", resp.StatusCode)
@@ -335,7 +376,7 @@ func TestTranscribeCleanupOffValues(t *testing.T) {
 		t.Run("keep:"+v, func(t *testing.T) {
 			asr := newStubASR(t, stubASROK("raw"))
 			cu := newStubCleanup(t)
-			srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+			srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 			postTranscribe(t, srv.URL+"/v1/transcribe", []byte("a"), map[string]string{"cleanup": v}, nil)
 			if cu.calls.Load() != 1 {
 				t.Errorf("cleanup=%q should keep cleanup enabled (calls=%d)", v, cu.calls.Load())
@@ -349,7 +390,7 @@ func TestTranscribeASRUpstreamError(t *testing.T) {
 		http.Error(w, "CUDA out of memory", http.StatusInternalServerError)
 	})
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 
 	resp := postTranscribe(t, srv.URL+"/v1/transcribe", []byte("audio"), nil, nil)
 	if resp.StatusCode != http.StatusBadGateway {
@@ -373,7 +414,7 @@ func TestTranscribeASRMalformedJSON(t *testing.T) {
 		_, _ = w.Write([]byte(`{"not_text":`))
 	})
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 
 	resp := postTranscribe(t, srv.URL+"/v1/transcribe", []byte("audio"), nil, nil)
 	if resp.StatusCode != http.StatusBadGateway {
@@ -389,7 +430,7 @@ func TestTranscribeCleanupFailureFallsBackToRaw(t *testing.T) {
 	cu := newStubCleanup(t)
 	cu.respCode = http.StatusInternalServerError
 
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 
 	resp := postTranscribe(t, srv.URL+"/v1/transcribe", []byte("audio"), nil, nil)
 	if resp.StatusCode != http.StatusOK {
@@ -413,7 +454,7 @@ func TestTranscribeCleanupTimeoutFallsBackToRaw(t *testing.T) {
 	cu.handlerFn = func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(2 * time.Second) // client timeout is 100ms; we never answer in time
 	}
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, func(c *Config) {
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, func(c *Config) {
 		c.UpstreamTimeout = 100 * time.Millisecond
 	})
 
@@ -433,7 +474,7 @@ func TestTranscribeASRTimeoutReturns504(t *testing.T) {
 		stubASROK("too late")(w, r)
 	})
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, func(c *Config) {
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, func(c *Config) {
 		c.UpstreamTimeout = 100 * time.Millisecond
 	})
 
@@ -449,7 +490,7 @@ func TestTranscribeASRTimeoutReturns504(t *testing.T) {
 func TestTranscribeMissingFile(t *testing.T) {
 	asr := newStubASR(t, stubASROK("x"))
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 
 	// Multipart with only text fields — no file part.
 	var buf bytes.Buffer
@@ -474,7 +515,7 @@ func TestTranscribeMissingFile(t *testing.T) {
 func TestTranscribeEmptyFile(t *testing.T) {
 	asr := newStubASR(t, stubASROK("x"))
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 
 	resp := postTranscribe(t, srv.URL+"/v1/transcribe", []byte{}, map[string]string{"file": ""}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
@@ -485,7 +526,7 @@ func TestTranscribeEmptyFile(t *testing.T) {
 func TestTranscribeNotMultipart(t *testing.T) {
 	asr := newStubASR(t, stubASROK("x"))
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/transcribe", strings.NewReader("{}"))
 	req.Header.Set("Content-Type", "application/json")
@@ -502,7 +543,7 @@ func TestTranscribeNotMultipart(t *testing.T) {
 func TestTranscribeTooLarge(t *testing.T) {
 	asr := newStubASR(t, stubASROK("x"))
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, func(c *Config) {
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, func(c *Config) {
 		c.MaxAudioBytes = 1024
 	})
 
@@ -518,7 +559,7 @@ func TestTranscribeTooLarge(t *testing.T) {
 func TestRouting(t *testing.T) {
 	asr := newStubASR(t, stubASROK("x"))
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
 
 	// GET on the transcribe route → 405 with Allow header.
 	resp, err := http.Get(srv.URL + "/v1/transcribe")
@@ -531,6 +572,16 @@ func TestRouting(t *testing.T) {
 	}
 	if allow := resp.Header.Get("Allow"); !strings.Contains(allow, "POST") {
 		t.Errorf("Allow header = %q", allow)
+	}
+
+	// GET on the speak route → 405 as well.
+	respSpeak, err := http.Get(srv.URL + "/v1/speak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	respSpeak.Body.Close()
+	if respSpeak.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /v1/speak status = %d, want 405", respSpeak.StatusCode)
 	}
 
 	// Unknown path → 404.
@@ -547,7 +598,7 @@ func TestRouting(t *testing.T) {
 func TestAuth(t *testing.T) {
 	asr := newStubASR(t, stubASROK("hello there"))
 	cu := newStubCleanup(t)
-	srv, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, func(c *Config) {
+	srv, _, _ := newTestServer(t, asr.srv.URL, cu.srv.URL, func(c *Config) {
 		c.APIToken = "sekrit-token"
 	})
 
@@ -597,5 +648,168 @@ func TestCleanupMaxTokens(t *testing.T) {
 		if got := cleanupMaxTokens(strings.Repeat("x", c.in)); got != c.want {
 			t.Errorf("cleanupMaxTokens(len=%d) = %d, want %d", c.in, got, c.want)
 		}
+	}
+}
+
+// --- /v1/speak --------------------------------------------------------------
+
+func postSpeak(t *testing.T, url string, body map[string]any) *http.Response {
+	t.Helper()
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshaling speak body: %v", err)
+	}
+	resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func TestSpeakSuccess(t *testing.T) {
+	asr := newStubASR(t, stubASROK("x"))
+	cu := newStubCleanup(t)
+	srv, _, tts := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+
+	resp := postSpeak(t, srv.URL+"/v1/speak", map[string]any{
+		"text": "hello world", "voice": "af_nicole", "speed": 1.5,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "audio/wav" {
+		t.Errorf("content-type = %q, want audio/wav", ct)
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, tts.respAudio) {
+		t.Error("audio bytes not passed through from upstream")
+	}
+	if h := resp.Header.Get("X-Process-Time-Ms"); h == "" {
+		t.Error("missing X-Process-Time-Ms header")
+	}
+
+	var fwd map[string]any
+	if err := json.Unmarshal(tts.lastBody.Load().([]byte), &fwd); err != nil {
+		t.Fatalf("decoding forwarded body: %v", err)
+	}
+	if fwd["model"] != "kokoro" || fwd["input"] != "hello world" || fwd["voice"] != "af_nicole" {
+		t.Errorf("forwarded fields = %v", fwd)
+	}
+	if fwd["speed"] != 1.5 {
+		t.Errorf("forwarded speed = %v, want 1.5", fwd["speed"])
+	}
+	if asr.calls.Load() != 0 || cu.calls.Load() != 0 {
+		t.Error("speak must not touch the ASR or cleanup upstreams")
+	}
+}
+
+func TestSpeakDefaults(t *testing.T) {
+	asr := newStubASR(t, stubASROK("x"))
+	cu := newStubCleanup(t)
+	srv, _, tts := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+
+	resp := postSpeak(t, srv.URL+"/v1/speak", map[string]any{"text": "hi"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var fwd map[string]any
+	if err := json.Unmarshal(tts.lastBody.Load().([]byte), &fwd); err != nil {
+		t.Fatalf("decoding forwarded body: %v", err)
+	}
+	if fwd["voice"] != "af_heart" {
+		t.Errorf("default voice = %v, want af_heart", fwd["voice"])
+	}
+	if fwd["speed"] != 1.0 {
+		t.Errorf("default speed = %v, want 1.0", fwd["speed"])
+	}
+}
+
+func TestSpeakEmptyText(t *testing.T) {
+	asr := newStubASR(t, stubASROK("x"))
+	cu := newStubCleanup(t)
+	srv, _, tts := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+
+	for _, body := range []map[string]any{{}, {"text": ""}, {"text": "   "}} {
+		resp := postSpeak(t, srv.URL+"/v1/speak", body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("body %v: status = %d, want 400", body, resp.StatusCode)
+		}
+	}
+	if tts.calls.Load() != 0 {
+		t.Error("empty text must not reach kokoro")
+	}
+}
+
+func TestSpeakTooLong(t *testing.T) {
+	asr := newStubASR(t, stubASROK("x"))
+	cu := newStubCleanup(t)
+	srv, _, tts := newTestServer(t, asr.srv.URL, cu.srv.URL, func(c *Config) {
+		c.MaxSpeakChars = 16
+	})
+
+	resp := postSpeak(t, srv.URL+"/v1/speak", map[string]any{"text": strings.Repeat("a", 64)})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+	if tts.calls.Load() != 0 {
+		t.Error("oversized text must not reach kokoro")
+	}
+}
+
+func TestSpeakBadSpeed(t *testing.T) {
+	asr := newStubASR(t, stubASROK("x"))
+	cu := newStubCleanup(t)
+	srv, _, tts := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+
+	for _, speed := range []float64{0.1, 9} {
+		resp := postSpeak(t, srv.URL+"/v1/speak", map[string]any{"text": "hi", "speed": speed})
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("speed %v: status = %d, want 400", speed, resp.StatusCode)
+		}
+	}
+	if tts.calls.Load() != 0 {
+		t.Error("invalid speed must not reach kokoro")
+	}
+}
+
+func TestSpeakUpstreamError(t *testing.T) {
+	asr := newStubASR(t, stubASROK("x"))
+	cu := newStubCleanup(t)
+	srv, _, tts := newTestServer(t, asr.srv.URL, cu.srv.URL, nil)
+	tts.respCode = http.StatusInternalServerError
+
+	resp := postSpeak(t, srv.URL+"/v1/speak", map[string]any{"text": "hi"})
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", resp.StatusCode)
+	}
+	if e := decodeError(t, resp); e.Error.Type != "upstream_error" {
+		t.Errorf("error type = %q", e.Error.Type)
+	}
+}
+
+func TestSpeakTimeoutReturns504(t *testing.T) {
+	asr := newStubASR(t, stubASROK("x"))
+	cu := newStubCleanup(t)
+	srv, _, tts := newTestServer(t, asr.srv.URL, cu.srv.URL, func(c *Config) {
+		c.UpstreamTimeout = 100 * time.Millisecond
+	})
+	tts.handlerFn = func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+	}
+
+	resp := postSpeak(t, srv.URL+"/v1/speak", map[string]any{"text": "hi"})
+	if resp.StatusCode != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504", resp.StatusCode)
+	}
+	if e := decodeError(t, resp); e.Error.Type != "upstream_timeout" {
+		t.Errorf("error type = %q", e.Error.Type)
 	}
 }

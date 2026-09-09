@@ -24,10 +24,11 @@ type Server struct {
 	cfg     Config
 	asr     *ASRClient
 	cleanup *CleanupClient
+	tts     *TTSClient
 }
 
-func NewServer(cfg Config, asr *ASRClient, cleanup *CleanupClient) *Server {
-	return &Server{cfg: cfg, asr: asr, cleanup: cleanup}
+func NewServer(cfg Config, asr *ASRClient, cleanup *CleanupClient, tts *TTSClient) *Server {
+	return &Server{cfg: cfg, asr: asr, cleanup: cleanup, tts: tts}
 }
 
 // Handler returns the fully wired HTTP handler (routes + auth middleware).
@@ -35,6 +36,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("POST /v1/transcribe", s.handleTranscribe)
+	mux.HandleFunc("POST /v1/speak", s.handleSpeak)
 	return withAuth(s.cfg.APIToken, mux)
 }
 
@@ -204,6 +206,72 @@ func (s *Server) handleTranscribe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleSpeak is the text-to-speech client endpoint:
+//
+//	POST /v1/speak  application/json
+//	  { "text": "required", "voice": "af_heart (optional)", "speed": 1.0 (optional) }
+//
+// Returns 200 with the synthesized audio (audio/wav, 24 kHz mono PCM16) and
+// an X-Process-Time-Ms header. Upstream failures are reported as 502/504.
+func (s *Server) handleSpeak(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+
+	// The body is tiny JSON; the text cap below bounds any realistic size.
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req struct {
+		Text  string   `json:"text"`
+		Voice string   `json:"voice"`
+		Speed *float64 `json:"speed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request",
+			"expected JSON body with a 'text' field: "+err.Error())
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "'text' must be non-empty")
+		return
+	}
+	if len(text) > s.cfg.MaxSpeakChars {
+		writeError(w, http.StatusRequestEntityTooLarge, "payload_too_long",
+			"text exceeds the length limit")
+		return
+	}
+	voice := strings.TrimSpace(req.Voice)
+	if voice == "" {
+		voice = s.cfg.KokoroDefaultVoice
+	}
+	speed := 1.0
+	if req.Speed != nil {
+		speed = *req.Speed
+	}
+	if speed < 0.25 || speed > 4 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "'speed' must be between 0.25 and 4")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.UpstreamTimeout)
+	defer cancel()
+
+	audio, err := s.tts.Speak(ctx, text, voice, speed)
+	if err != nil {
+		status, typ := upstreamHTTPStatus(err)
+		log.Printf("kokoro failure: %v", err)
+		writeError(w, status, typ, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("X-Process-Time-Ms", strconv.FormatInt(time.Since(start).Milliseconds(), 10))
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(audio); err != nil {
+		log.Printf("writing speak response: %v", err)
+	}
+}
+
 // parseBoolDefault interprets form booleans: empty/missing → def;
 // false-ish: false/0/off/no; true-ish: true/1/on/yes (case-insensitive);
 // anything else falls back to strconv.ParseBool, then def.
@@ -272,16 +340,18 @@ func main() {
 	asr := &ASRClient{BaseURL: cfg.ASRBaseURL, Model: cfg.ASRModelName, HTTP: httpClient}
 	cleanup := &CleanupClient{BaseURL: cfg.CleanupBaseURL, Model: cfg.CleanupModelName,
 		SystemPrompt: cleanupPrompt, Styling: cfg.CleanupStyling, HTTP: httpClient}
+	tts := &TTSClient{BaseURL: cfg.KokoroBaseURL, Model: cfg.KokoroModelName, HTTP: httpClient}
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           NewServer(cfg, asr, cleanup).Handler(),
+		Handler:           NewServer(cfg, asr, cleanup, tts).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	log.Printf("asr-api listening on %s (asr=%s model=%s, cleanup=%s model=%s styling=%s prompt=%s, auth=%v, max_upload=%d bytes)",
+	log.Printf("asr-api listening on %s (asr=%s model=%s, cleanup=%s model=%s styling=%s prompt=%s, kokoro=%s voice=%s, auth=%v, max_upload=%d bytes)",
 		cfg.ListenAddr, cfg.ASRBaseURL, cfg.ASRModelName,
-		cfg.CleanupBaseURL, cfg.CleanupModelName, cfg.CleanupStyling, cfg.CleanupPromptFile, cfg.APIToken != "", cfg.MaxAudioBytes)
+		cfg.CleanupBaseURL, cfg.CleanupModelName, cfg.CleanupStyling, cfg.CleanupPromptFile,
+		cfg.KokoroBaseURL, cfg.KokoroDefaultVoice, cfg.APIToken != "", cfg.MaxAudioBytes)
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server error: %v", err)

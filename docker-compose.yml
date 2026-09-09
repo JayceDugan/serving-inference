@@ -2,7 +2,7 @@
 #
 # A bare `docker compose up -d` starts Open WebUI, Langfuse (included from the
 # services/langfuse submodule), the ONNX embedding service, and the ASR stack
-# (2 vLLM engines + api). Only two services stay profile-gated:
+# (2 vLLM engines + Kokoro TTS + api). Only two services stay profile-gated:
 #   docker compose --profile unsloth        up -d    # Unsloth Studio
 #   docker compose --profile agent-browser  up -d    # stealthy browser (Camoufox)
 #
@@ -305,6 +305,51 @@ services:
     networks:
       - asr-net
 
+  kokoro-model:
+    # Kokoro-82M TTS behind an OpenAI-style /v1/audio/speech. ~0.5 GiB of the
+    # 5080's VRAM — trivial next to the two vLLM engines (~9.1 GiB combined).
+    # Comes up after asr-model so its weight load doesn't race vLLM's memory
+    # profiling window (same serial bring-up rule as cleanup-model).
+    build: ./services/asr/kokoro-image
+    image: ai-lab-kokoro:latest
+    container_name: asr-kokoro-model
+    restart: unless-stopped
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_TOKEN: ${HF_TOKEN:-}
+      # 'a' = American English (default); 'b' = British. One pipeline per
+      # process; voices must match the language prefix.
+      KOKORO_LANG_CODE: ${KOKORO_LANG_CODE:-a}
+    volumes:
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    ipc: host
+    ports:
+      # Loopback-only debug port; asr-api reaches it over asr-net.
+      - "127.0.0.1:${KOKORO_MODEL_DEBUG_PORT:-8012}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ASR_GPU_ID:-1}"]
+              capabilities: [gpu]
+    depends_on:
+      asr-model:
+        condition: service_healthy
+    healthcheck:
+      # First start downloads ~0.4 GB of weights + voices; torch import is slow.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:8000/health || exit 1",
+        ]
+      interval: 15s
+      timeout: 10s
+      start_period: 600s
+      retries: 40
+    networks:
+      - asr-net
+
   asr-api:
     build: ./services/asr/api
     image: ai-lab-asr-api:latest
@@ -326,6 +371,9 @@ services:
       CLEANUP_MODEL_NAME: s1-mini
       CLEANUP_STYLING: ${CLEANUP_STYLING:-semi-formal}
       CLEANUP_PROMPT_FILE: /prompts/cleanup-system.txt
+      KOKORO_BASE_URL: http://kokoro-model:8000/v1
+      KOKORO_MODEL_NAME: kokoro
+      KOKORO_DEFAULT_VOICE: ${KOKORO_DEFAULT_VOICE:-af_heart}
       ASR_API_TOKEN: ${ASR_API_TOKEN:-}
       MAX_AUDIO_BYTES: "26214400"
       UPSTREAM_TIMEOUT_SECONDS: "120"

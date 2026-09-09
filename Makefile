@@ -25,13 +25,13 @@ logs-browser: ## Follow stealth browser logs
 	docker compose logs -f stealthy-browser
 
 asr-up: ## Start the ASR stack (pinned to the RTX 5080)
-	docker compose up -d --build asr-model cleanup-model asr-api
+	docker compose up -d --build asr-model cleanup-model kokoro-model asr-api
 
 asr-down: ## Stop and remove only the ASR containers
-	docker compose down asr-model cleanup-model asr-api
+	docker compose down asr-model cleanup-model kokoro-model asr-api
 
 asr-logs: ## Follow ASR stack logs
-	docker compose logs -f asr-model cleanup-model asr-api
+	docker compose logs -f asr-model cleanup-model kokoro-model asr-api
 
 asr-test: ## Run the asr-api Go test suite
 	cd services/asr/api && go test ./...
